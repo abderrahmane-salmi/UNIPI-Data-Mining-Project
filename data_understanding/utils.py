@@ -57,6 +57,29 @@ class DataQualityReporter():
         plt.show()
 
 
-   
 
+def check_in_set(df: pd.DataFrame, column:str, valid_values) -> list(int, str):
+    if column not in df.columns:
+        raise ValueError(f"the column {column} doesn't exist in the dataframe")
+
+    mask_invalid = ~df[column].isin(valid_values)
+    return [(i,"column not recognized") for i in mask_invalid]
     
+def check_date(df: pd.DataFrame, column:str = "birth_date", date_min: str = "1920-01-01") -> list(int, str):
+    #copy_ = pd.to_datetime(df[column], errors="coerce")
+    
+    date_min = pd.to_datetime(date_min)
+    date_max = pd.Timestamp.today()
+    
+    mask_too_old = (df[column] < date_min)
+    mask_too_young = (df[column] > date_max)
+    invalids = [(i,"too_old") for i in mask_too_old].extend([(i,"too_young") for i in mask_too_young])
+    return invalids.sort()
+
+def check_numeric_range(df: pd.DataFrame, column: str, start: int|float, end:int|float):
+    mask_too_small = (df[column] < start)
+    mask_too_large = (df[column] > end)
+    too_small_elements = [(i, f"too small {column}") for i in mask_too_small]
+    too_large_elements = [(i, f"too large {column}") for i in mask_too_large]
+    
+    return too_small_elements.extend(too_large_elements).sort()
