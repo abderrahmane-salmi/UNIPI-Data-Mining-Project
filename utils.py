@@ -1,56 +1,61 @@
 import scipy.stats as stats
 import pandas as pd
 import numpy as np
+import seaborn as sns
+from matplotlib import pyplot as plt
 
-def check_data_quality(df, date_columns=None, date_min='1900-01-01', date_max=None):
-    """
-    Checks for missing, invalid, and outlier values in a dataset.
-    
-    Parameters:
-        df (pd.DataFrame): Your dataset.
-        date_columns (list): Columns to validate as dates.
-        date_min (str): Minimum acceptable date (optional).
-        date_max (str): Maximum acceptable date (default = today).
-    
-    Returns:
-        dict: Summary report of issues found.
-    """
-    report = {}
-
-    # Missing values
-    missing = df.isna().sum()
-    report['missing_values'] = missing[missing > 0]
-
-    #Duplicate rows
-    report['duplicate_rows'] = df[df.duplicated()]
-
-    #Date validation
-    if date_columns:
-        date_issues = {}
-        if date_max is None:
-            date_max = pd.Timestamp.today()
-
-        for col in date_columns:
-            converted = pd.to_datetime(df[col], errors='coerce')
-            invalid_format = df[converted.isna() & df[col].notna()]
-            logical_error = df[(converted < date_min) | (converted > date_max)]
-            
-            date_issues[col] = {
-                'invalid_format_rows': invalid_format.index.tolist(),
-                'logical_error_rows': logical_error.index.tolist()
-            }
-        report['date_issues'] = date_issues
-
-    return report
-
-
-class DataQuality():
+class DataQualityReporter():
     """
     Checks for missing and invalid values in a dataset.
     """
-    def __init__(self, df, feature_functions_handler):
+    def __init__(self, df: pd.DataFrame, feature_validator_functions: dict | None=None):
         self.df = df
-        self.feature_functions_handler
+        self.feature_validators = feature_validator_functions
+        self.report = {}
+
+    def __getitem__(self, report_key):
+        """Returns the corresponding report value"""
+        if report_key not in self.report.keys():
+            return None
+        else:
+            return self.report[report_key]
     
-    def get_report():
-        return {}
+    def compute_report(self):
+        # Adds features with missing values to report
+        missing = self.df.isna().sum()
+        self.report['missing_values'] = missing[missing > 0]
+
+        # Duplicate rows
+        self.report['duplicate_rows'] = self.df[self.df.duplicated()]
+
+        features = self.df.columns.to_list()
+        self.report['not_validated'] = []
+        self.report["invalid"] = {}
+
+        # Checks for invalid values in categorical features
+        for feature in features:
+            if feature not in self.features_validators.keys():
+                # if the dictionary doesn't contain a function for the feature then it is not validated
+                self.report['not_validated'].append(feature)
+            else:
+                invalid_values_function = self.features_validators[feature]
+                invalid = invalid_values_function(self.df, feature)
+                if invalid != None:
+                    self.report["invalid"][feature] = invalid
+        return self.report
+    
+    def report_duplicated_rows(self):
+        print(self.df["duplicated_rows"])
+
+
+    def plot_missing_values(self):
+        if self.report == {}:
+            raise ValueError("Report is not computed")
+        plt.figure(figsize=(14,6))
+        sns.heatmap(self.report["missing_values"], cbar=False, cmap='viridis')
+        plt.title("Missing values in all_tracks.csv")
+        plt.show()
+
+   
+
+    
