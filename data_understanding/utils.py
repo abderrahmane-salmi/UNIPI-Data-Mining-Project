@@ -92,6 +92,32 @@ def check_numeric_range(df: pd.DataFrame, column: str, start: int|float, end:int
     res.sort()
     return res
 
+
+italian_regions = {
+    "Piemonte",
+    "Abruzzo",
+    "Toscana",
+    "Molise",
+    "Emilia-Romagna",
+    "Veneto",
+    "Friuli-Venezia-Giulia",
+    "Lombardia",
+    "Valle d'Aosta",
+    "Liguria",
+    "Marche",
+    "Lazio",
+    "Umbria",
+    "Campania",
+    "Sardegna",
+    "Sicilia",
+    "Calabria",
+    "Puglia",
+    "Basilicata",
+    "Trentino Alto Adige"
+    }
+
+
+
 if __name__ == "__main__":
     df = pd.read_csv("../datasets/artists.csv", sep=";")
     feature_vectors = {
