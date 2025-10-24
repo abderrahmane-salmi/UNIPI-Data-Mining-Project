@@ -9,9 +9,11 @@ class DataQualityReporter():
     """
     Checks for missing and invalid values in a dataset.
     """
-    def __init__(self, df: pd.DataFrame, feature_validator_functions: Dict[str, Callable[[pd.DataFrame, str], Any]] | None=None):
+    def __init__(self, df: pd.DataFrame, feature_validator_functions: Dict[str, Callable[[pd.DataFrame, str], Any]] | None=None
+                 , ignore_features: List[str] | None = None):
         self.df = df
         self.feature_validators = feature_validator_functions
+        self.ignore_features = ignore_features
         self.report = {}
 
     def __getitem__(self, report_key):
@@ -26,10 +28,16 @@ class DataQualityReporter():
         missing = self.df.isna().sum()
         self.report['missing_values'] = missing[missing > 0]
 
-        # Duplicate rows
-        self.report['duplicate_rows'] = self.df[self.df.duplicated()]
-
         features = self.df.columns.to_list()
+        # Duplicate rows
+        if self.ignore_features is None:
+            self.report['duplicate_rows'] = self.df[self.df.duplicated()]
+        else:
+            features_to_consider = list(filter(lambda x: x not in self.ignore_features, features))
+            self.report['duplicate_rows'] = self.df[self.df.duplicated(subset=features_to_consider)]    
+        
+
+        
         self.report['not_validated'] = []
         self.report["invalid"] = {}
 
@@ -47,6 +55,9 @@ class DataQualityReporter():
     
     def report_duplicated_rows(self):
         print(self.report["duplicate_rows"])
+    
+    def report_invalid_values(self):
+        print(list(filter(lambda x: self.report['invalid'][x] != [],self.report['invalid'].keys())))
 
 
     def plot_missing_values(self):
