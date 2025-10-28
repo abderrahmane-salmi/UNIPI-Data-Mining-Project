@@ -127,6 +127,10 @@ italian_regions = {
     "Trentino Alto Adige"
     }
 
+language_codes = {
+    'aa', 'bg', 'ca', 'chr', 'co', 'cs', 'cy', 'da', 'de', 'en', 'eo', 'es', 'et', 'eu', 'fr', 'gl', 'ia', 'it', 'la', 'lt', 'mt', 'nl', 'no', 'pl', 'pt', 'qu', 'rm', 'ro',
+    'ru', 'rw', 'sco', 'sq', 'sr', 'sw', 'war',
+}
 
 
 if __name__ == "__main__":
