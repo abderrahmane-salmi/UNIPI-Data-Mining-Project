@@ -3,7 +3,9 @@ import pandas as pd
 import numpy as np
 import seaborn as sns
 from matplotlib import pyplot as plt
+from matplotlib.axes import Axes
 from typing import List, Tuple, Dict, Callable, Any
+from pandas.api.types import CategoricalDtype
 
 class DataQualityReporter():
     """
@@ -77,7 +79,7 @@ def check_in_set(df: pd.DataFrame, column:str, valid_values) -> List[Tuple[int, 
     if column not in df.columns:
         raise ValueError(f"the column {column} doesn't exist in the dataframe")
 
-    mask_invalid = ~df[column].isin(valid_values)
+    mask_invalid = df[column].notna() & ~df[column].isin(valid_values)
     return [(int(i), f"value '{df.loc[i, column]}' not in allowed set") for i in df.index[mask_invalid]]
     
 def check_date(df: pd.DataFrame, column:str, date_min: str) -> List[Tuple[int, str]]:
@@ -102,6 +104,175 @@ def check_numeric_range(df: pd.DataFrame, column: str, start: int|float, end:int
     res.extend([(i, f"too large {column}") for i in df.index[mask_too_large]])
     res.sort()
     return res
+
+
+def plot_categorical_distribution(
+    series: pd.Series,
+    *,
+    figsize: tuple[float, float] = (6, 4),
+    top_n: int | None = 10,
+    title: str | None = None,
+    palette: str | list[str] = "viridis",
+    horizontal: bool = True,
+    include_na: bool = True,
+    order: list[str] | None = None,
+    ax: Axes | None = None,
+) -> plt.Figure:
+   
+    values = series.copy()
+    if isinstance(values.dtype, CategoricalDtype):
+        # ensure the placeholder category exists before assigning it
+        if "Unknown" not in values.cat.categories:
+            values = values.cat.add_categories(["Unknown"])
+
+    if order is not None:
+        mask_known = values.isin(order) | values.isna()
+        values = values.where(mask_known, other="Unknown")
+
+    if include_na:
+        values = values.fillna("Unknown")
+    else:
+        values = values.dropna()
+
+    counts = values.astype(str).value_counts()
+    if order is not None:
+        reindex_order = list(order)
+        if "Unknown" in counts.index and "Unknown" not in reindex_order:
+            reindex_order.append("Unknown")
+        counts = counts.reindex(reindex_order, fill_value=0)
+        if top_n is not None:
+            counts = counts.iloc[:top_n]
+    else:
+        if top_n is not None:
+            counts = counts.head(top_n)
+
+    if horizontal and order is None:
+        counts = counts.sort_values()
+
+    plot_df = counts.rename_axis("category").reset_index(name="count")
+
+    if ax is None:
+        fig = plt.figure(figsize=figsize)
+        ax = fig.add_subplot(111)
+    else:
+        fig = ax.figure
+
+    if plot_df.empty:
+        ax.text(0.5, 0.5, "No data available", ha="center", va="center")
+        ax.set_xticks([])
+        ax.set_yticks([])
+    else:
+        if horizontal:
+            sns.barplot(
+                data=plot_df,
+                x="count",
+                y="category",
+                hue="category",
+                ax=ax,
+                orient="h",
+                palette=palette,
+                legend=False,
+            )
+            ax.set_xlabel("Count")
+            ax.set_ylabel("")
+        else:
+            sns.barplot(
+                data=plot_df,
+                x="category",
+                y="count",
+                hue="category",
+                ax=ax,
+                palette=palette,
+                legend=False,
+            )
+            ax.set_xlabel("")
+            ax.set_ylabel("Count")
+            ax.tick_params(axis="x", labelrotation=30)
+            plt.setp(ax.get_xticklabels(), ha="right")
+
+    ax.set_title(title or (series.name or ""))
+
+    fig.tight_layout()
+    return fig
+
+
+def plot_numerical(
+    series: pd.Series,
+    *,
+    title: str | None = None,
+    bins: int = 30,
+    log_scale: bool = False,
+    kde: bool = True,
+    color: str | None = None,
+) -> plt.Figure:
+   
+    data = series.dropna()
+
+    fig = plt.figure(figsize=(6, 4))
+    ax = fig.add_subplot(111)
+
+    if data.empty:
+        ax.text(0.5, 0.5, "No data available", ha="center", va="center")
+        ax.set_xticks([])
+        ax.set_yticks([])
+    else:
+        sns.histplot(
+            data,
+            ax=ax,
+            kde=kde,
+            bins=bins,
+            color=color or sns.color_palette("viridis", n_colors=1)[0],
+            log_scale=log_scale,
+        )
+        ax.set_ylabel("Count")
+
+    xlabel = series.name or "Value"
+    if log_scale:
+        xlabel = f"{xlabel} (log scale)"
+    ax.set_xlabel(xlabel)
+    ax.set_title(title or xlabel)
+
+    fig.tight_layout()
+
+    return fig
+
+
+def plot_date_distribution(
+    series: pd.Series,
+    *,
+    bins: int = 10,
+    title: str | None = None,
+    include_na_note: bool = False,
+    ax: Axes | None = None,
+    figsize: tuple[float, float] = (8, 4),
+) -> plt.Figure:
+   
+    converted = pd.to_datetime(series, errors="coerce")
+    valid_values = converted.dropna()
+    missing_count = int(converted.isna().sum())
+
+    if ax is None:
+        fig = plt.figure(figsize=figsize)
+        ax = fig.add_subplot(111)
+    else:
+        fig = ax.figure
+    if valid_values.empty:
+        ax.text(0.5, 0.5, "No data available", ha="center", va="center")
+        ax.set_xticks([])
+        ax.set_yticks([])
+    else:
+        sns.histplot(valid_values, bins=bins, ax=ax)
+        ax.set_xlabel(series.name or "Date")
+        ax.set_ylabel("Count")
+
+    plot_title = title or (series.name or "")
+    if include_na_note and missing_count:
+        plot_title = f"{plot_title} (unknown: {missing_count})"
+    ax.set_title(plot_title)
+
+    fig.tight_layout()
+
+    return fig
 
 
 italian_regions = {
