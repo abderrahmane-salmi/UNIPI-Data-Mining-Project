@@ -133,6 +133,13 @@ language_codes = {
 }
 
 
+# HELPER FUN: Drop multiple columns from a DataFrame if they exist
+def drop_columns_if_exists(df, columns):
+    existing_cols = [col for col in columns if col in df.columns]
+    if existing_cols:
+        df = df.drop(columns=existing_cols)
+    return df
+
 if __name__ == "__main__":
     df = pd.read_csv("../datasets/artists.csv", sep=";")
     feature_vectors = {
