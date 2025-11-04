@@ -274,6 +274,22 @@ def plot_date_distribution(
 
     return fig
 
+import pandas as pd
+import matplotlib.pyplot as plt
+
+def plot_boxplot(df, column, by=None, title=None, figsize=(8, 6)):
+    plt.figure(figsize=figsize)
+    df.boxplot(column=column, by=by, grid=False, patch_artist=True,
+               boxprops=dict(facecolor='lightblue', color='black'),
+               medianprops=dict(color='red', linewidth=2),
+               whiskerprops=dict(color='gray'),
+               capprops=dict(color='gray'))
+    plt.title(title if title else f'Boxplot of {column}')
+    plt.suptitle('')  # Rimuove il titolo automatico di pandas
+    plt.xlabel(by if by else '')
+    plt.ylabel(column)
+    plt.show()
+
 
 italian_regions = {
     "Piemonte",
