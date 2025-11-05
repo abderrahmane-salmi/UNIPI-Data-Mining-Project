@@ -274,8 +274,26 @@ def plot_date_distribution(
 
     return fig
 
-import pandas as pd
-import matplotlib.pyplot as plt
+
+def plot_swear_words(df:pd.DataFrame, language: str ="IT", threshold: int = 20):
+    col = f"swear_{language}_words"
+    swear_cols = sorted(set([item for sublist in df[col] for item in sublist]))
+
+    # Conta le occorrenze (somma dei valori 1 in ogni colonna)
+    counts = df[swear_cols].sum().sort_values(ascending=False)
+
+    counts = counts[counts>threshold]
+    # Crea il grafico
+    plt.figure(figsize=(10, 6))
+    plt.bar(counts.index, counts.values, color="darkred", alpha=0.8)
+    lang = "Italian" if language == "IT" else "English"
+    plt.title(f"{lang} Swear Words Distribution", fontsize=14, fontweight="bold")
+    plt.xlabel("Swear Word", fontsize=12)
+    plt.ylabel("Occurences", fontsize=12)
+    plt.xticks(rotation=45, ha="right")
+    plt.grid(axis="y", linestyle="--", alpha=0.5)
+    plt.tight_layout()
+    plt.show()
 
 def plot_boxplot(df, column, by=None, title=None, figsize=(8, 6)):
     plt.figure(figsize=figsize)
