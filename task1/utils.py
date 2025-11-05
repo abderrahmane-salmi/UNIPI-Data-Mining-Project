@@ -295,6 +295,7 @@ def plot_swear_words(df:pd.DataFrame, language: str ="IT", threshold: int = 20):
     plt.tight_layout()
     plt.show()
 
+
 def plot_boxplot(df, column, by=None, title=None, figsize=(8, 6)):
     plt.figure(figsize=figsize)
     df.boxplot(column=column, by=by, grid=False, patch_artist=True,
@@ -379,6 +380,7 @@ def one_hot_encode_array_feature(df, col_name):
     df = df.copy()
     
     uniques = sorted(set([item for sublist in df[col_name] for item in sublist]))
+
     # Build a dictionary of binary columns
     one_hot_dict = {
         word: df[col_name].apply(lambda x: int(word in x))
@@ -389,4 +391,5 @@ def one_hot_encode_array_feature(df, col_name):
     one_hot_df = pd.DataFrame(one_hot_dict, index=df.index)
     df = pd.concat([df, one_hot_df], axis=1)
     
+
     return df
