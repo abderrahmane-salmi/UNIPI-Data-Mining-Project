@@ -337,3 +337,32 @@ if __name__ == "__main__":
     dqr.compute_report()
     dqr.report_duplicated_rows()
     dqr.plot_missing_values()
+
+
+def scatterplot(df, x_col, y_col, figsize = (8,6), color_col=None, title=None, xlabel=None, ylabel=None):
+
+    plt.figure(figsize=figsize)
+
+    if color_col and color_col in df.columns:
+        plt.scatter(df[x_col], df[y_col], c=df[color_col], cmap='viridis', s=40, alpha=0.7, edgecolors='k')
+        plt.colorbar(label=color_col)
+    else:
+        plt.scatter(df[x_col], df[y_col], s=40, alpha=0.7, edgecolors='k')
+
+    plt.title(title or f"{y_col} vs {x_col}", fontsize=14, fontweight='bold')
+    plt.xlabel(xlabel or x_col, fontsize=12)
+    plt.ylabel(ylabel or y_col, fontsize=12)
+    plt.grid(True, linestyle='--', alpha=0.5)
+    plt.tight_layout()
+    plt.show()
+    
+
+def one_hot_encode_array_feature(df, col_name):
+    df = df.copy()
+    
+    uniques = sorted(set([item for sublist in df[col_name] for item in sublist]))
+
+    for word in uniques:
+        df[word] = df[col_name].apply(lambda x: 1 if word in x else 0)
+        
+    return df
