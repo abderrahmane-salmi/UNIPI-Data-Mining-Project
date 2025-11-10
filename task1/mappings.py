@@ -129,13 +129,13 @@ wiki_author_mapping = {
 "ART40229749":"Baby K",
 "ART56320683":"Bassi Maestro",
 "ART19605256":"Beba (rapper)",
-"ART02666525":"BigMama (rapper)",
+"ART02666525":"BigMama",
 "ART03111237":"Brusco (cantante)",
-"ART95365016":"",  # Bushwaka (non chiaro)
-"ART28846313":"Caneda (rapper)",
+"ART95365016":"Layo & Bushwacka!",  # Bushwaka (non chiaro)
+"ART28846313":"Caneda",
 "ART27304446":"Caparezza",
 "ART70825116":"Capo Plaza",
-"ART67409252":"Chadia Rodriguez",
+"ART67409252":"Chadia Rodríguez",
 "ART71969350":"Clementino (rapper)",
 "ART81071062":"Club Dogo",
 "ART78209349":"Coez",
@@ -162,27 +162,27 @@ wiki_author_mapping = {
 "ART83125571":"Ghali",
 "ART73965015":"Ghemon",
 "ART79325822":"Grido",
-"ART04141409":"Gué",  # pagina titolo attuale
+"ART04141409":"Guè",  # pagina titolo attuale
 "ART91515842":"Hell Raton",
 "ART59593021":"",  # Hindaco non chiaro
-"ART08177154":"Il Tre (rapper)",
+"ART08177154":"Il Tre",
 "ART57730937":"Inoki",
 "ART17812958":"J-Ax",
 "ART80977821":"Jack the Smoker",
 "ART88792008":"Jake La Furia",
-"ART88199433":"",  # Joey Funboy non chiaro
+"ART88199433":"Joey Boy",  
 "ART07469279":"Johnny Marsiglia",
 "ART88423027":"La Pina",
-"ART39344115":"Lazza (rapper)",
+"ART39344115":"Lazza",
 "ART05528539":"Luchè",
 "ART20729624":"Madame (cantante)",
-"ART40433104":"MadMan (rapper)",
+"ART40433104":"MadMan",
 "ART16868977":"Mahmood",
 "ART61734477":"MamboLosco",
 "ART02733420":"Marracash",
 "ART63613967":"Massimo Pericolo",
-"ART37807199":"Mike24",  # Mike24 non chiaro
-"ART43601431":"M¥SS KETA",
+"ART37807199":"Highsnob",  # Mike24 non chiaro
+"ART43601431":"Myss Keta",
 "ART51628788":"Miss Simpatia",  # Miss Simpatia non chiaro
 "ART48537029":"Mistaman",
 "ART66452136":"",  # MISTICO (voce barca a vela) -> non rapper
@@ -195,14 +195,14 @@ wiki_author_mapping = {
 "ART19060721":"Niky Savage",  # Niky Savage non chiaro
 "ART78358659":"Nitro (rapper)",
 "ART07127070":"Noyz Narcos",
-"ART42220690":"O' Zulù",
+"ART42220690":"'O Zulù",
 "ART12092805":"Papa V",
 "ART66932389":"Piotta",
 "ART87389753":"Priestess (rapper)",  # attenzione: esiste anche band canadese
 "ART08456301":"Rancore (rapper)",
 "ART89596800":"Rkomi",
 "ART17240256":"Rocco Hunt",
-"ART08302616":"Rondo (rapper)",  # Wikip. titolata Rondo (rapper)
+"ART08302616":"Rondodasosa",  # Wikip. titolata Rondo (rapper)
 "ART04205421":"Rosa Chemical",
 "ART74676403":"Rose Villain",
 "ART02449272":"Roshelle",
@@ -224,5 +224,82 @@ wiki_author_mapping = {
 "ART57587384":"Willie Peyote",
 "ART71515715":"Yendry",
 "ART83631935":"Yung Snapp",
+}
+
+IMPUTABLE_EXTRACTORS = {
+    # --- Album / Release ---
+    "album": lambda r: (
+        r.get("releases", [{}])[0]
+         .get("release-group", {})
+         .get("title")
+    ),
+
+    "album_name": lambda r: (
+        r.get("releases", [{}])[0]
+         .get("title")
+    ),
+
+    "album_release_date": lambda r: (
+        r.get("first-release-date")
+        or r.get("releases", [{}])[0].get("date")
+    ),
+
+    "album_type": lambda r: (
+        r.get("releases", [{}])[0]
+         .get("release-group", {})
+         .get("primary-type")
+    ),
+
+    "id_album": lambda r: (
+        r.get("releases", [{}])[0]
+         .get("id")
+    ),
+
+    # --- Track info ---
+    "disc_number": lambda r: (
+        r.get("releases", [{}])[0]
+         .get("media", [{}])[0]
+         .get("position")
+    ),
+
+    "track_number": lambda r: (
+        r.get("releases", [{}])[0]
+         .get("media", [{}])[0]
+         .get("track", [{}])[0]
+         .get("number")
+    ),
+
+    "duration_ms": lambda r: (
+        r.get("length")
+    ),
+
+    # --- Artista / Titolo ---
+    "name_artist": lambda r: (
+        r.get("artist-credit", [{}])[0]
+         .get("artist", {})
+         .get("name")
+    ),
+
+    "title": lambda r: (
+        r.get("title")
+    ),
+
+    # --- Date (derivata) ---
+    "year": lambda r: (
+        (r.get("first-release-date") or "")
+        .split("-")[0] or None
+    ),
+
+    "month": lambda r: (
+        (r.get("first-release-date") or "")
+        .split("-")[1]
+        if len((r.get("first-release-date") or "").split("-")) > 1 else None
+    ),
+
+    "day": lambda r: (
+        (r.get("first-release-date") or "")
+        .split("-")[2]
+        if len((r.get("first-release-date") or "").split("-")) > 2 else None
+    ),
 }
 
