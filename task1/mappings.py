@@ -1,0 +1,305 @@
+
+# Mappa delle proprietà utili per un artista
+# Proprietà DIRETTE dell'artista (persona/gruppo)
+
+REGIONS = {
+    "Abruzzo",
+    "Basilicata",
+    "Calabria",
+    "Campania",
+    "Emilia-Romagna",
+    "Friuli-Venezia Giulia",
+    "Lazio",
+    "Liguria",
+    "Lombardia",
+    "Marche",
+    "Molise",
+    "Piemonte",
+    "Puglia",
+    "Sardegna",
+    "Sicilia",
+    "Toscana",
+    "Trentino-Alto Adige",
+    "Umbria",
+    "Valle d'Aosta",
+    "Veneto",
+}
+
+CITY_TO_REGION = {
+    "Milano": "Lombardia",
+    "Roma": "Lazio",
+    "Napoli": "Campania",
+    "Torino": "Piemonte",
+    "Bologna": "Emilia-Romagna",
+    "Genova": "Liguria",
+    "Firenze": "Toscana",
+    "Venezia": "Veneto",
+    "Palermo": "Sicilia",
+    "Cagliari": "Sardegna",
+    "Bari": "Puglia",
+    "Ancona": "Marche",
+    "L'Aquila": "Abruzzo",
+    "Trento": "Trentino-Alto Adige",
+    "Bolzano": "Trentino-Alto Adige",
+    "Perugia": "Umbria",
+    "Potenza": "Basilicata",
+    "Catanzaro": "Calabria",
+    "Campobasso": "Molise",
+    "Aosta": "Valle d'Aosta",
+    "Trieste": "Friuli-Venezia Giulia",
+
+    "Verona": "Veneto",
+    "Padova": "Veneto",
+    "Parma": "Emilia-Romagna",
+    "Modena": "Emilia-Romagna",
+    "Reggio Emilia": "Emilia-Romagna",
+    "Rimini": "Emilia-Romagna",
+    "Pisa": "Toscana",
+    "Livorno": "Toscana",
+    "Prato": "Toscana",
+    "Taranto": "Puglia",
+    "Lecce": "Puglia",
+    "Messina": "Sicilia",
+    "Catania": "Sicilia",
+    "Reggio Calabria": "Calabria",
+    "Salerno": "Campania",
+    "Bergamo": "Lombardia",
+    "Brescia": "Lombardia",
+    "Como": "Lombardia",
+    "Monza": "Lombardia",
+    "Novara": "Piemonte",
+    "Alessandria": "Piemonte",
+    "La Spezia": "Liguria",
+    "Terni": "Umbria",
+    "Pescara": "Abruzzo",
+    "Cosenza": "Calabria",
+    "Siracusa": "Sicilia",
+    "Trapani": "Sicilia",
+    "Caltanissetta": "Sicilia",
+    "Ragusa": "Sicilia",
+    "Sassari": "Sardegna",
+    "Olbia": "Sardegna",
+    "Cremona": "Lombardia",
+    "Mantova": "Lombardia",
+    "Udine": "Friuli-Venezia Giulia",
+    "Treviso": "Veneto",
+    "Varese": "Lombardia",
+    "Ferrara": "Emilia-Romagna",
+}
+ARITIST_PROPS = {
+    "P21":  "gender",
+    "P569": "birth_date",
+    "P19":  "birth_place",
+    "P27":  "nationality",
+    "P2031": "active_start",
+    "P2032": "active_end",
+    "P131": "province_or_region",
+    "P17":  "country",
+    "P625": "coordinates",
+}
+
+REGIONAL_HINT_PROPS = {
+    "luogo_di_attivita": "P937",
+    "residenza": "P551",
+    "luogo_di_formazione": "P740",
+}
+
+
+REGION_SYNONYMS = {
+    "Emilia Romagna": "Emilia-Romagna",
+    "Friuli Venezia Giulia": "Friuli-Venezia Giulia",
+    "Trentino Alto Adige": "Trentino-Alto Adige",
+    "Trentino-Alto Adige/Sudtirolo": "Trentino-Alto Adige",
+    "Val d'Aosta": "Valle d'Aosta",
+    "Val d’Aosta": "Valle d'Aosta",
+    "Valle d'Aosta/Vallée d'Aoste": "Valle d'Aosta",
+    "Valle d’Aosta": "Valle d'Aosta",
+    "Trentino-Südtirol": "Trentino-Alto Adige",
+    "Friuli": "Friuli-Venezia Giulia",
+}
+
+
+wiki_author_mapping = {
+"ART82291002":"99 Posse",
+"ART53496045":"Achille Lauro (cantante)",
+"ART18853907":"Alfa (cantante)",
+"ART64265460":"Anna (rapper)",
+"ART75741740":"Articolo 31",
+"ART24123617":"Babaman",
+"ART40229749":"Baby K",
+"ART56320683":"Bassi Maestro",
+"ART19605256":"Beba (rapper)",
+"ART02666525":"BigMama",
+"ART03111237":"Brusco (cantante)",
+"ART95365016":"Layo & Bushwacka!",  # Bushwaka (non chiaro)
+"ART28846313":"Caneda",
+"ART27304446":"Caparezza",
+"ART70825116":"Capo Plaza",
+"ART67409252":"Chadia Rodríguez",
+"ART71969350":"Clementino (rapper)",
+"ART81071062":"Club Dogo",
+"ART78209349":"Coez",
+"ART85821920":"Colle der Fomento",
+"ART59609037":"Cor Veleno",
+"ART46851094":"Dani Faiv",
+"ART63985757":"Dargen D'Amico",
+"ART96068455":"Dark Polo Gang",
+"ART52349448":"",  # Doll Kill (non chiaro)
+"ART14383873":"Don Joe",
+"ART09119396":"DrefGold",
+"ART86549066":"Emis Killa",
+"ART57616402":"Ensi",
+"ART19729064":"Entics",
+"ART76284946":"Ernia",
+"ART14073567":"",  # Eva Rea?
+"ART25707984":"Fabri Fibra",
+"ART07024718":"Fedez",
+"ART46711784":"Frah Quintale",
+"ART31005348":"Frankie hi-nrg mc",
+"ART52465778":"Fred De Palma",
+"ART85046033":"Gemitaiz",
+"ART87162895":"Geolier",
+"ART83125571":"Ghali",
+"ART73965015":"Ghemon",
+"ART79325822":"Grido",
+"ART04141409":"Guè",  # pagina titolo attuale
+"ART91515842":"Hell Raton",
+"ART59593021":"",  # Hindaco non chiaro
+"ART08177154":"Il Tre",
+"ART57730937":"Inoki",
+"ART17812958":"J-Ax",
+"ART80977821":"Jack the Smoker",
+"ART88792008":"Jake La Furia",
+"ART88199433":"Joey Boy",  
+"ART07469279":"Johnny Marsiglia",
+"ART88423027":"La Pina",
+"ART39344115":"Lazza",
+"ART05528539":"Luchè",
+"ART20729624":"Madame (cantante)",
+"ART40433104":"MadMan",
+"ART16868977":"Mahmood",
+"ART61734477":"MamboLosco",
+"ART02733420":"Marracash",
+"ART63613967":"Massimo Pericolo",
+"ART37807199":"Highsnob",  # Mike24 non chiaro
+"ART43601431":"Myss Keta",
+"ART51628788":"Miss Simpatia",  # Miss Simpatia non chiaro
+"ART48537029":"Mistaman",
+"ART66452136":"",  # MISTICO (voce barca a vela) -> non rapper
+"ART91352277":"Mondo Marcio",
+"ART71846481":"Mr. Rain",
+"ART86576759":"Mudimbi",
+"ART52272796":"Neffa",
+"ART62385172":"Nerone (rapper)",  # Nerone ambigua (opera); il rapper: Nerone (rapper)
+"ART07629990":"Nesli",
+"ART19060721":"Niky Savage",  # Niky Savage non chiaro
+"ART78358659":"Nitro (rapper)",
+"ART07127070":"Noyz Narcos",
+"ART42220690":"'O Zulù",
+"ART12092805":"Papa V",
+"ART66932389":"Piotta",
+"ART87389753":"Priestess (rapper)",  # attenzione: esiste anche band canadese
+"ART08456301":"Rancore (rapper)",
+"ART89596800":"Rkomi",
+"ART17240256":"Rocco Hunt",
+"ART08302616":"Rondodasosa",  # Wikip. titolata Rondo (rapper)
+"ART04205421":"Rosa Chemical",
+"ART74676403":"Rose Villain",
+"ART02449272":"Roshelle",
+"ART48622722":"Salmo (rapper)",
+"ART56967402":"Highsnob",
+"ART87497821":"Sfera Ebbasta",
+"ART98307962":"Shablo",
+"ART26418649":"Shade (rapper)",
+"ART64850829":"Shiva (rapper)",
+"ART41225226":"Skioffi",
+"ART28717687":"Slait",
+"ART22979236":"Sottotono",
+"ART85780419":"Tedua",
+"ART88026810":"Thasup",
+"ART51721248":"Tony Boy",
+"ART57242110":"Tony Effe",
+"ART98118784":"Tormento (rapper)",
+"ART15560128":"Vacca (rapper)",
+"ART57587384":"Willie Peyote",
+"ART71515715":"Yendry",
+"ART83631935":"Yung Snapp",
+}
+
+IMPUTABLE_EXTRACTORS = {
+    # --- Album / Release ---
+    "album": lambda r: (
+        r.get("releases", [{}])[0]
+         .get("release-group", {})
+         .get("title")
+    ),
+
+    "album_name": lambda r: (
+        r.get("releases", [{}])[0]
+         .get("title")
+    ),
+
+    "album_release_date": lambda r: (
+        r.get("first-release-date")
+        or r.get("releases", [{}])[0].get("date")
+    ),
+
+    "album_type": lambda r: (
+        r.get("releases", [{}])[0]
+         .get("release-group", {})
+         .get("primary-type")
+    ),
+
+    "id_album": lambda r: (
+        r.get("releases", [{}])[0]
+         .get("id")
+    ),
+
+    # --- Track info ---
+    "disc_number": lambda r: (
+        r.get("releases", [{}])[0]
+         .get("media", [{}])[0]
+         .get("position")
+    ),
+
+    "track_number": lambda r: (
+        r.get("releases", [{}])[0]
+         .get("media", [{}])[0]
+         .get("track", [{}])[0]
+         .get("number")
+    ),
+
+    "duration_ms": lambda r: (
+        r.get("length")
+    ),
+
+    # --- Artista / Titolo ---
+    "name_artist": lambda r: (
+        r.get("artist-credit", [{}])[0]
+         .get("artist", {})
+         .get("name")
+    ),
+
+    "title": lambda r: (
+        r.get("title")
+    ),
+
+    # --- Date (derivata) ---
+    "year": lambda r: (
+        (r.get("first-release-date") or "")
+        .split("-")[0] or None
+    ),
+
+    "month": lambda r: (
+        (r.get("first-release-date") or "")
+        .split("-")[1]
+        if len((r.get("first-release-date") or "").split("-")) > 1 else None
+    ),
+
+    "day": lambda r: (
+        (r.get("first-release-date") or "")
+        .split("-")[2]
+        if len((r.get("first-release-date") or "").split("-")) > 2 else None
+    ),
+}
+
