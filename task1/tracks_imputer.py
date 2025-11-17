@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import time
+from pathlib import Path
 from typing import Any, Dict, Optional
 
 import pandas as pd
@@ -39,11 +40,34 @@ class TracksImputer:
         self._session.headers.update({"User-Agent": user_agent, "Accept": "application/json"})
         self._last_request = 0.0
 
-    def impute(self, df: pd.DataFrame, *, inplace: bool = False) -> pd.DataFrame:
+    IMPUTED_FILENAME = "tracks_imputed.csv"
+
+    def impute(
+        self,
+        df: pd.DataFrame,
+        *,
+        inplace: bool = False,
+        cache_dir: str | Path | None = None,
+    ) -> pd.DataFrame:
         if not isinstance(df, pd.DataFrame):
             raise TypeError("df must be a pandas DataFrame")
         work_df = df if inplace or not self.copy else df.copy()
-        return work_df.apply(self._impute_row, axis=1)
+
+        cache_path: Path | None = None
+        if cache_dir is not None:
+            cache_dir = Path(cache_dir)
+            cache_path = cache_dir / self.IMPUTED_FILENAME
+            if cache_path.exists():
+                cached_df = pd.read_csv(cache_path)
+                return self._finalize_result(df, cached_df, inplace)
+
+        imputed_df = work_df.apply(self._impute_row, axis=1)
+
+        if cache_path is not None:
+            cache_path.parent.mkdir(parents=True, exist_ok=True)
+            imputed_df.to_csv(cache_path, index=False)
+
+        return self._finalize_result(df, imputed_df, inplace)
 
     def _impute_row(self, row: pd.Series) -> pd.Series:
         if not self._needs_imputation(row):
@@ -160,9 +184,16 @@ class TracksImputer:
             return value.isoformat()
         return str(value)
 
+    def _finalize_result(
+        self, original_df: pd.DataFrame, result_df: pd.DataFrame, inplace: bool
+    ) -> pd.DataFrame:
+        if not inplace:
+            return result_df
+        original_df[result_df.columns] = result_df
+        return original_df
+
 
 if __name__ == "__main__":
     tracks_df = pd.read_csv("datasets/tracks.csv")
     imputer = TracksImputer()
-    imputed = imputer.impute(tracks_df)
-    imputed.to_csv("tracks_imputed.csv", index=False)
+    imputer.impute(tracks_df, cache_dir=Path(__file__).resolve().parent)
