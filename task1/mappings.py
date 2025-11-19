@@ -1,6 +1,6 @@
 
-# Mappa delle proprietà utili per un artista
-# Proprietà DIRETTE dell'artista (persona/gruppo)
+# Map of useful properties for an artist
+# Direct properties of the artist (person/group)
 
 REGIONS = {
     "Abruzzo",
@@ -131,7 +131,7 @@ wiki_author_mapping = {
 "ART19605256":"Beba (rapper)",
 "ART02666525":"BigMama",
 "ART03111237":"Brusco (cantante)",
-"ART95365016":"Layo & Bushwacka!",  # Bushwaka (non chiaro)
+"ART95365016":"Layo & Bushwacka!",  # Bushwaka (unclear)
 "ART28846313":"Caneda",
 "ART27304446":"Caparezza",
 "ART70825116":"Capo Plaza",
@@ -144,7 +144,7 @@ wiki_author_mapping = {
 "ART46851094":"Dani Faiv",
 "ART63985757":"Dargen D'Amico",
 "ART96068455":"Dark Polo Gang",
-"ART52349448":"",  # Doll Kill (non chiaro)
+"ART52349448":"",  # Doll Kill (unclear)
 "ART14383873":"Don Joe",
 "ART09119396":"DrefGold",
 "ART86549066":"Emis Killa",
@@ -162,9 +162,9 @@ wiki_author_mapping = {
 "ART83125571":"Ghali",
 "ART73965015":"Ghemon",
 "ART79325822":"Grido",
-"ART04141409":"Guè",  # pagina titolo attuale
+"ART04141409":"Guè",  # current page title
 "ART91515842":"Hell Raton",
-"ART59593021":"",  # Hindaco non chiaro
+"ART59593021":"",  # Hindaco unclear
 "ART08177154":"Il Tre",
 "ART57730937":"Inoki",
 "ART17812958":"J-Ax",
@@ -181,28 +181,28 @@ wiki_author_mapping = {
 "ART61734477":"MamboLosco",
 "ART02733420":"Marracash",
 "ART63613967":"Massimo Pericolo",
-"ART37807199":"Highsnob",  # Mike24 non chiaro
+"ART37807199":"Highsnob",  # Mike24 unclear
 "ART43601431":"Myss Keta",
-"ART51628788":"Miss Simpatia",  # Miss Simpatia non chiaro
+"ART51628788":"Miss Simpatia",  # Miss Simpatia unclear
 "ART48537029":"Mistaman",
-"ART66452136":"",  # MISTICO (voce barca a vela) -> non rapper
+"ART66452136":"",  # MISTICO (sailing entry) -> not a rapper
 "ART91352277":"Mondo Marcio",
 "ART71846481":"Mr. Rain",
 "ART86576759":"Mudimbi",
 "ART52272796":"Neffa",
-"ART62385172":"Nerone (rapper)",  # Nerone ambigua (opera); il rapper: Nerone (rapper)
+"ART62385172":"Nerone (rapper)",  # Nerone ambiguous (opera); the rapper: Nerone (rapper)
 "ART07629990":"Nesli",
-"ART19060721":"Niky Savage",  # Niky Savage non chiaro
+"ART19060721":"Niky Savage",  # Niky Savage unclear
 "ART78358659":"Nitro (rapper)",
 "ART07127070":"Noyz Narcos",
 "ART42220690":"'O Zulù",
 "ART12092805":"Papa V",
 "ART66932389":"Piotta",
-"ART87389753":"Priestess (rapper)",  # attenzione: esiste anche band canadese
+"ART87389753":"Priestess (rapper)",  # note: there is also a Canadian band
 "ART08456301":"Rancore (rapper)",
 "ART89596800":"Rkomi",
 "ART17240256":"Rocco Hunt",
-"ART08302616":"Rondodasosa",  # Wikip. titolata Rondo (rapper)
+"ART08302616":"Rondodasosa",  # Wikipedia titled Rondo (rapper)
 "ART04205421":"Rosa Chemical",
 "ART74676403":"Rose Villain",
 "ART02449272":"Roshelle",
@@ -273,7 +273,7 @@ IMPUTABLE_EXTRACTORS = {
         r.get("length")
     ),
 
-    # --- Artista / Titolo ---
+    # --- Artist / Title ---
     "name_artist": lambda r: (
         r.get("artist-credit", [{}])[0]
          .get("artist", {})
@@ -284,7 +284,7 @@ IMPUTABLE_EXTRACTORS = {
         r.get("title")
     ),
 
-    # --- Date (derivata) ---
+    # --- Derived dates ---
     "year": lambda r: (
         (r.get("first-release-date") or "")
         .split("-")[0] or None
@@ -302,4 +302,3 @@ IMPUTABLE_EXTRACTORS = {
         if len((r.get("first-release-date") or "").split("-")) > 2 else None
     ),
 }
-

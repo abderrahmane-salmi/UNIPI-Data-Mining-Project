@@ -65,10 +65,10 @@ class DataQualityReporter():
     def plot_missing_values(self):
         if self.report == {}:
             raise ValueError("Report is not computed")
-        sns.heatmap(self.df.isnull(), cbar=False, annot=True, fmt="d", cmap="viridis") #soluzione momentanea, prima con self.report["missing_values"] non funzionava
+        sns.heatmap(self.df.isnull(), cbar=False, annot=True, fmt="d", cmap="viridis")  # temporary solution; using self.report["missing_values"] did not work earlier
         plt.title("Missing values in all_tracks.csv")
         plt.xlabel("Columns")
-        plt.ylabel("")           # niente etichetta per la singola riga
+        plt.ylabel("")           # no label for the single row
         plt.xticks(rotation=45, ha="right")
         plt.tight_layout()
         plt.show()
@@ -279,11 +279,11 @@ def plot_swear_words(df:pd.DataFrame, language: str ="IT", threshold: int = 20):
     col = f"swear_{language}_words"
     swear_cols = sorted(set([item for sublist in df[col] for item in sublist]))
 
-    # Conta le occorrenze (somma dei valori 1 in ogni colonna)
+    # Count occurrences (sum of the 1 values in each column)
     counts = df[swear_cols].sum().sort_values(ascending=False)
 
     counts = counts[counts>threshold]
-    # Crea il grafico
+    # Create the chart
     plt.figure(figsize=(10, 6))
     plt.bar(counts.index, counts.values, color="darkred", alpha=0.8)
     lang = "Italian" if language == "IT" else "English"
@@ -296,17 +296,61 @@ def plot_swear_words(df:pd.DataFrame, language: str ="IT", threshold: int = 20):
     plt.show()
 
 
-def plot_boxplot(df, column, by=None, title=None, figsize=(8, 6)):
-    plt.figure(figsize=figsize)
-    df.boxplot(column=column, by=by, grid=False, patch_artist=True,
-               boxprops=dict(facecolor='lightblue', color='black'),
-               medianprops=dict(color='red', linewidth=2),
-               whiskerprops=dict(color='gray'),
-               capprops=dict(color='gray'))
-    plt.title(title if title else f'Boxplot of {column}')
-    plt.suptitle('')  # Rimuove il titolo automatico di pandas
-    plt.xlabel(by if by else '')
-    plt.ylabel(column)
+def plot_boxplot(df, column, by=None, title=None, figsize=(4, 6), outlier_col=None):
+    fig, ax = plt.subplots(figsize=figsize)
+    sns.boxplot(
+        data=df,
+        x=by,
+        y=column,
+        ax=ax,
+        color="lightblue",
+        medianprops=dict(color="red", linewidth=2),
+        boxprops=dict(edgecolor="black"),
+        whiskerprops=dict(color="gray"),
+        capprops=dict(color="gray"),
+    )
+
+    if outlier_col and outlier_col in df.columns:
+        mask_outliers = df[outlier_col].astype(bool)
+        if by is None:
+            ax.scatter(
+                np.zeros(mask_outliers.sum()),
+                df.loc[mask_outliers, column],
+                color="tomato",
+                edgecolors="k",
+                alpha=0.9,
+                label="Outlier",
+            )
+        else:
+            # map group labels to x positions
+            tick_labels = [t.get_text() for t in ax.get_xticklabels()]
+            pos_map = {label: pos for pos, label in enumerate(tick_labels)}
+            for label, grp in df.groupby(by):
+                grp_out = grp[grp[outlier_col].astype(bool)]
+                if grp_out.empty:
+                    continue
+                x_pos = pos_map.get(str(label))
+                if x_pos is None:
+                    continue
+                ax.scatter(
+                    np.full(len(grp_out), x_pos),
+                    grp_out[column],
+                    color="tomato",
+                    edgecolors="k",
+                    alpha=0.9,
+                    label="Outlier" if "Outlier" not in ax.get_legend_handles_labels()[1] else None,
+                )
+        handles, labels = ax.get_legend_handles_labels()
+        handles_labels = [(h, l) for h, l in zip(handles, labels) if l]
+        if handles_labels:
+            handles, labels = zip(*handles_labels)
+            ax.legend(handles, labels)
+
+    ax.set_title(title if title else f"Boxplot of {column}")
+    ax.set_xlabel(by if by else "")
+    ax.set_ylabel(column)
+    fig.suptitle("")
+    plt.tight_layout()
     plt.show()
 
 
@@ -358,11 +402,33 @@ if __name__ == "__main__":
     dqr.plot_missing_values()
 
 
-def scatterplot(df, x_col, y_col, figsize = (8,6), color_col=None, title=None, xlabel=None, ylabel=None):
+def scatterplot(df, x_col, y_col, figsize=(8,6), color_col=None, outlier_col=None, title=None, xlabel=None, ylabel=None):
 
     plt.figure(figsize=figsize)
 
-    if color_col and color_col in df.columns:
+    # If an outlier flag is provided, draw inliers/outliers with different colors
+    if outlier_col and outlier_col in df.columns:
+        mask_outliers = df[outlier_col].astype(bool)
+        plt.scatter(
+            df.loc[~mask_outliers, x_col],
+            df.loc[~mask_outliers, y_col],
+            s=40,
+            alpha=0.7,
+            edgecolors='k',
+            label='Inlier',
+            color='tab:blue',
+        )
+        plt.scatter(
+            df.loc[mask_outliers, x_col],
+            df.loc[mask_outliers, y_col],
+            s=50,
+            alpha=0.9,
+            edgecolors='k',
+            label='Outlier',
+            color='tomato',
+        )
+        plt.legend(title=outlier_col)
+    elif color_col and color_col in df.columns:
         plt.scatter(df[x_col], df[y_col], c=df[color_col], cmap='viridis', s=40, alpha=0.7, edgecolors='k')
         plt.colorbar(label=color_col)
     else:

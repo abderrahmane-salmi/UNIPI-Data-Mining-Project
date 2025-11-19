@@ -2,11 +2,11 @@
 # -*- coding: utf-8 -*-
 
 """
-Estrattore Wikidata per artisti (es: Sfera Ebbasta).
-- Parte da un titolo Wikipedia (it) e trova l'ID Wikidata
-- Scarica l'entità Wikidata
-- Estrae proprietà utili per un artista
-- Risolve gli ID (Qxxxx) in etichette in italiano (fallback: inglese)
+Wikidata extractor for artists (e.g., Sfera Ebbasta).
+- Starts from an Italian Wikipedia title and finds the Wikidata ID
+- Downloads the Wikidata entity
+- Extracts useful properties for an artist
+- Resolves IDs (Qxxxx) into labels in Italian (fallback: English)
 """
 import requests
 from typing import Any, Dict, List, Optional
@@ -24,7 +24,7 @@ WIKIDATA_ENTITY = "https://www.wikidata.org/wiki/Special:EntityData/{id}.json"
 
 """gender;birth_date;birth_place;nationality;description;active_start;active_end;province;region;country;latitude;longitude"""
 class ArtistImputer:
-    """Imputer che arricchisce gli artisti con i dati di Wikidata/Wikipedia."""
+    """Imputer that enriches artists with Wikidata/Wikipedia data."""
 
     DATE_PROPERTIES = {"P569", "P2031", "P2032"}
 
@@ -188,7 +188,7 @@ class ArtistImputer:
         return applied
 
 
-    ###logica per provare a inferire la regione e la provincia
+    # Logic to try inferring the region and province
 
     def _resolve_region(
         self,
