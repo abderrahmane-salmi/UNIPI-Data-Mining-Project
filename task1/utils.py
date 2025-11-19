@@ -3,7 +3,9 @@ import pandas as pd
 import numpy as np
 import seaborn as sns
 from matplotlib import pyplot as plt
+from matplotlib.axes import Axes
 from typing import List, Tuple, Dict, Callable, Any
+from pandas.api.types import CategoricalDtype
 
 class DataQualityReporter():
     """
@@ -63,10 +65,10 @@ class DataQualityReporter():
     def plot_missing_values(self):
         if self.report == {}:
             raise ValueError("Report is not computed")
-        sns.heatmap(self.df.isnull(), cbar=False, annot=True, fmt="d", cmap="viridis") #soluzione momentanea, prima con self.report["missing_values"] non funzionava
+        sns.heatmap(self.df.isnull(), cbar=False, annot=True, fmt="d", cmap="viridis")  # temporary solution; using self.report["missing_values"] did not work earlier
         plt.title("Missing values in all_tracks.csv")
         plt.xlabel("Columns")
-        plt.ylabel("")           # niente etichetta per la singola riga
+        plt.ylabel("")           # no label for the single row
         plt.xticks(rotation=45, ha="right")
         plt.tight_layout()
         plt.show()
@@ -77,7 +79,7 @@ def check_in_set(df: pd.DataFrame, column:str, valid_values) -> List[Tuple[int, 
     if column not in df.columns:
         raise ValueError(f"the column {column} doesn't exist in the dataframe")
 
-    mask_invalid = ~df[column].isin(valid_values)
+    mask_invalid = df[column].notna() & ~df[column].isin(valid_values)
     return [(int(i), f"value '{df.loc[i, column]}' not in allowed set") for i in df.index[mask_invalid]]
     
 def check_date(df: pd.DataFrame, column:str, date_min: str) -> List[Tuple[int, str]]:
@@ -102,6 +104,308 @@ def check_numeric_range(df: pd.DataFrame, column: str, start: int|float, end:int
     res.extend([(i, f"too large {column}") for i in df.index[mask_too_large]])
     res.sort()
     return res
+
+
+def detect_outliers_iqr(series: pd.Series, k: float = 1.5) -> pd.Series:
+    """
+    Flags values that fall outside the IQR fence (Q1 - k*IQR, Q3 + k*IQR).
+
+    Parameters
+    ----------
+    series: pd.Series
+        Numeric series to inspect. It is coerced to numeric in case of object dtypes.
+    k: float
+        IQR multiplier (1.5 gives the classical Tukey fence).
+
+    Returns
+    -------
+    pd.Series
+        Boolean mask aligned with the original index where True marks an outlier.
+    """
+    if not isinstance(series, pd.Series):
+        raise TypeError("detect_outliers_iqr expects a pandas Series")
+
+    numeric = pd.to_numeric(series, errors="coerce")
+    q1 = numeric.quantile(0.25)
+    q3 = numeric.quantile(0.75)
+    iqr = q3 - q1
+
+    if pd.isna(iqr) or iqr == 0:
+        # If there is not enough spread we can't flag any point as an outlier
+        return pd.Series(False, index=series.index, name=f"{series.name}_is_outlier")
+
+    lower = q1 - k * iqr
+    upper = q3 + k * iqr
+    mask = (numeric < lower) | (numeric > upper)
+    mask = mask.fillna(False)
+    mask.name = f"{series.name}_is_outlier" if series.name else "is_outlier"
+    return mask
+
+
+def plot_categorical_distribution(
+    series: pd.Series,
+    *,
+    figsize: tuple[float, float] = (6, 4),
+    top_n: int | None = 10,
+    title: str | None = None,
+    palette: str | list[str] = "viridis",
+    horizontal: bool = True,
+    include_na: bool = True,
+    order: list[str] | None = None,
+    ax: Axes | None = None,
+) -> plt.Figure:
+   
+    values = series.copy()
+    if isinstance(values.dtype, CategoricalDtype):
+        # ensure the placeholder category exists before assigning it
+        if "Unknown" not in values.cat.categories:
+            values = values.cat.add_categories(["Unknown"])
+
+    if order is not None:
+        mask_known = values.isin(order) | values.isna()
+        values = values.where(mask_known, other="Unknown")
+
+    if include_na:
+        values = values.fillna("Unknown")
+    else:
+        values = values.dropna()
+
+    counts = values.astype(str).value_counts()
+    if order is not None:
+        reindex_order = list(order)
+        if "Unknown" in counts.index and "Unknown" not in reindex_order:
+            reindex_order.append("Unknown")
+        counts = counts.reindex(reindex_order, fill_value=0)
+        if top_n is not None:
+            counts = counts.iloc[:top_n]
+    else:
+        if top_n is not None:
+            counts = counts.head(top_n)
+
+    if horizontal and order is None:
+        counts = counts.sort_values()
+
+    plot_df = counts.rename_axis("category").reset_index(name="count")
+
+    if ax is None:
+        fig = plt.figure(figsize=figsize)
+        ax = fig.add_subplot(111)
+    else:
+        fig = ax.figure
+
+    if plot_df.empty:
+        ax.text(0.5, 0.5, "No data available", ha="center", va="center")
+        ax.set_xticks([])
+        ax.set_yticks([])
+    else:
+        if horizontal:
+            sns.barplot(
+                data=plot_df,
+                x="count",
+                y="category",
+                hue="category",
+                ax=ax,
+                orient="h",
+                palette=palette,
+                legend=False,
+            )
+            ax.set_xlabel("Count")
+            ax.set_ylabel("")
+        else:
+            sns.barplot(
+                data=plot_df,
+                x="category",
+                y="count",
+                hue="category",
+                ax=ax,
+                palette=palette,
+                legend=False,
+            )
+            ax.set_xlabel("")
+            ax.set_ylabel("Count")
+            ax.tick_params(axis="x", labelrotation=30)
+            plt.setp(ax.get_xticklabels(), ha="right")
+
+    ax.set_title(title or (series.name or ""))
+
+    fig.tight_layout()
+    return fig
+
+
+def plot_numerical(
+    series: pd.Series,
+    *,
+    title: str | None = None,
+    bins: int = 30,
+    log_scale: bool = False,
+    kde: bool = True,
+    color: str | None = None,
+    ax: Axes | None = None,
+    figsize: tuple[float, float] = (6, 4),
+) -> plt.Figure:
+    numeric = pd.to_numeric(series, errors="coerce").dropna()
+
+    if ax is None:
+        fig, ax = plt.subplots(figsize=figsize)
+    else:
+        fig = ax.figure
+
+    if numeric.empty:
+        ax.text(0.5, 0.5, "No data available", ha="center", va="center")
+        ax.set_xticks([])
+        ax.set_yticks([])
+    else:
+        sns.histplot(
+            numeric,
+            ax=ax,
+            kde=kde,
+            bins=bins,
+            color=color or sns.color_palette("viridis", n_colors=1)[0],
+            log_scale=log_scale,
+        )
+        ax.set_ylabel("Count")
+
+    xlabel = series.name or "Value"
+    if log_scale:
+        xlabel = f"{xlabel} (log scale)"
+    ax.set_xlabel(xlabel)
+    ax.set_title(title or xlabel)
+
+    fig.tight_layout()
+
+    return fig
+
+
+def plot_date_distribution(
+    series: pd.Series,
+    *,
+    bins: int = 10,
+    title: str | None = None,
+    include_na_note: bool = False,
+    ax: Axes | None = None,
+    figsize: tuple[float, float] = (8, 4),
+) -> plt.Figure:
+   
+    converted = pd.to_datetime(series, errors="coerce")
+    valid_values = converted.dropna()
+    missing_count = int(converted.isna().sum())
+
+    if ax is None:
+        fig = plt.figure(figsize=figsize)
+        ax = fig.add_subplot(111)
+    else:
+        fig = ax.figure
+    if valid_values.empty:
+        ax.text(0.5, 0.5, "No data available", ha="center", va="center")
+        ax.set_xticks([])
+        ax.set_yticks([])
+    else:
+        sns.histplot(valid_values, bins=bins, ax=ax)
+        ax.set_xlabel(series.name or "Date")
+        ax.set_ylabel("Count")
+
+    plot_title = title or (series.name or "")
+    if include_na_note and missing_count:
+        plot_title = f"{plot_title} (unknown: {missing_count})"
+    ax.set_title(plot_title)
+
+    fig.tight_layout()
+
+    return fig
+
+
+def plot_swear_words(df:pd.DataFrame, language: str ="IT", threshold: int = 20):
+    col = f"swear_{language}_words"
+    swear_cols = sorted(set([item for sublist in df[col] for item in sublist]))
+
+    # Count occurrences (sum of the 1 values in each column)
+    counts = df[swear_cols].sum().sort_values(ascending=False)
+
+    counts = counts[counts>threshold]
+    # Create the chart
+    plt.figure(figsize=(10, 6))
+    plt.bar(counts.index, counts.values, color="darkred", alpha=0.8)
+    lang = "Italian" if language == "IT" else "English"
+    plt.title(f"{lang} Swear Words Distribution", fontsize=14, fontweight="bold")
+    plt.xlabel("Swear Word", fontsize=12)
+    plt.ylabel("Occurences", fontsize=12)
+    plt.xticks(rotation=45, ha="right")
+    plt.grid(axis="y", linestyle="--", alpha=0.5)
+    plt.tight_layout()
+    plt.show()
+
+
+def plot_boxplot(
+    df,
+    column,
+    by=None,
+    title=None,
+    figsize=(4, 6),
+    outlier_col=None,
+    ax: Axes | None = None,
+):
+    created_fig = False
+    if ax is None:
+        fig, ax = plt.subplots(figsize=figsize)
+        created_fig = True
+    else:
+        fig = ax.figure
+    sns.boxplot(
+        data=df,
+        x=by,
+        y=column,
+        ax=ax,
+        color="lightblue",
+        medianprops=dict(color="red", linewidth=2),
+        boxprops=dict(edgecolor="black"),
+        whiskerprops=dict(color="gray"),
+        capprops=dict(color="gray"),
+    )
+
+    if outlier_col and outlier_col in df.columns:
+        mask_outliers = df[outlier_col].astype(bool)
+        if by is None:
+            ax.scatter(
+                np.zeros(mask_outliers.sum()),
+                df.loc[mask_outliers, column],
+                color="tomato",
+                edgecolors="k",
+                alpha=0.9,
+                label="Outlier",
+            )
+        else:
+            # map group labels to x positions
+            tick_labels = [t.get_text() for t in ax.get_xticklabels()]
+            pos_map = {label: pos for pos, label in enumerate(tick_labels)}
+            for label, grp in df.groupby(by):
+                grp_out = grp[grp[outlier_col].astype(bool)]
+                if grp_out.empty:
+                    continue
+                x_pos = pos_map.get(str(label))
+                if x_pos is None:
+                    continue
+                ax.scatter(
+                    np.full(len(grp_out), x_pos),
+                    grp_out[column],
+                    color="tomato",
+                    edgecolors="k",
+                    alpha=0.9,
+                    label="Outlier" if "Outlier" not in ax.get_legend_handles_labels()[1] else None,
+                )
+        handles, labels = ax.get_legend_handles_labels()
+        handles_labels = [(h, l) for h, l in zip(handles, labels) if l]
+        if handles_labels:
+            handles, labels = zip(*handles_labels)
+            ax.legend(handles, labels)
+
+    ax.set_title(title if title else f"Boxplot of {column}")
+    ax.set_xlabel(by if by else "")
+    ax.set_ylabel(column)
+    fig.suptitle("")
+    fig.tight_layout()
+    if created_fig:
+        plt.show()
+    return fig
 
 
 italian_regions = {
@@ -150,3 +454,62 @@ if __name__ == "__main__":
     dqr.compute_report()
     dqr.report_duplicated_rows()
     dqr.plot_missing_values()
+
+
+def scatterplot(df, x_col, y_col, figsize=(8,6), color_col=None, outlier_col=None, title=None, xlabel=None, ylabel=None):
+
+    plt.figure(figsize=figsize)
+
+    # If an outlier flag is provided, draw inliers/outliers with different colors
+    if outlier_col and outlier_col in df.columns:
+        mask_outliers = df[outlier_col].astype(bool)
+        plt.scatter(
+            df.loc[~mask_outliers, x_col],
+            df.loc[~mask_outliers, y_col],
+            s=40,
+            alpha=0.7,
+            edgecolors='k',
+            label='Inlier',
+            color='tab:blue',
+        )
+        plt.scatter(
+            df.loc[mask_outliers, x_col],
+            df.loc[mask_outliers, y_col],
+            s=50,
+            alpha=0.9,
+            edgecolors='k',
+            label='Outlier',
+            color='tomato',
+        )
+        plt.legend(title=outlier_col)
+    elif color_col and color_col in df.columns:
+        plt.scatter(df[x_col], df[y_col], c=df[color_col], cmap='viridis', s=40, alpha=0.7, edgecolors='k')
+        plt.colorbar(label=color_col)
+    else:
+        plt.scatter(df[x_col], df[y_col], s=40, alpha=0.7, edgecolors='k')
+
+    plt.title(title or f"{y_col} vs {x_col}", fontsize=14, fontweight='bold')
+    plt.xlabel(xlabel or x_col, fontsize=12)
+    plt.ylabel(ylabel or y_col, fontsize=12)
+    plt.grid(True, linestyle='--', alpha=0.5)
+    plt.tight_layout()
+    plt.show()
+    
+
+def one_hot_encode_array_feature(df, col_name):
+    df = df.copy()
+    
+    uniques = sorted(set([item for sublist in df[col_name] for item in sublist]))
+
+    # Build a dictionary of binary columns
+    one_hot_dict = {
+        word: df[col_name].apply(lambda x: int(word in x))
+        for word in uniques
+    }
+
+    # Create a DataFrame from it
+    one_hot_df = pd.DataFrame(one_hot_dict, index=df.index)
+    df = pd.concat([df, one_hot_df], axis=1)
+    
+
+    return df
