@@ -12,6 +12,7 @@ import requests
 from typing import Any, Dict, List, Optional
 import re
 from collections import Counter
+from pathlib import Path
 import json
 from mappings import *
 import pandas as pd
@@ -32,6 +33,7 @@ class ArtistImputer:
     """Imputer that enriches artists with Wikidata/Wikipedia data."""
 
     DATE_PROPERTIES = {"P569", "P2031", "P2032"}
+    IMPUTED_FILENAME = "artists_imputed.csv"
 
     def __init__(
         self,
@@ -47,7 +49,9 @@ class ArtistImputer:
         copy: bool = True,
         timeout: int = 30,
         log_path: Optional[str] = "log2",
-        region_wikipedia_threshold = 1
+        region_wikipedia_threshold = 1,
+        cache_dir: Optional[str | Path] = None,
+        cache_enabled: bool = True,
     ) -> None:
         self.artist_props = dict(artist_props or ARITIST_PROPS)
         self.location_hint_props = tuple((location_hint_props or REGIONAL_HINT_PROPS).values())
@@ -60,6 +64,14 @@ class ArtistImputer:
         self.timeout = timeout
         self.log_path = log_path
         self.region_wikipedia_threshold = region_wikipedia_threshold
+        self.cache_enabled = cache_enabled
+        if self.cache_enabled:
+            base_cache_dir = Path(cache_dir) if cache_dir is not None else Path(__file__).resolve().parent
+            self.cache_dir = base_cache_dir
+            self._default_cache_path = base_cache_dir / self.IMPUTED_FILENAME
+        else:
+            self.cache_dir = None
+            self._default_cache_path = None
 
         self._session = requests.Session()
         self._session.headers.update({"User-Agent": user_agent})
@@ -72,12 +84,29 @@ class ArtistImputer:
         self._region_cache: Dict[str, Optional[str]] = {}
         self._region_prop_column = self.artist_props.get("P131", "province_or_region")
 
-    def impute_from_wikidata(self, df: pd.DataFrame, *, inplace: bool = False) -> pd.DataFrame:
+    def impute_from_wikidata(
+        self,
+        df: pd.DataFrame,
+        *,
+        inplace: bool = False,
+        cache_dir: Optional[str | Path] = None,
+        use_cache: Optional[bool] = None,
+    ) -> pd.DataFrame:
         if not isinstance(df, pd.DataFrame):
             raise TypeError("df must be a pandas DataFrame")
+        cache_path = self._resolve_cache_path(cache_dir, use_cache)
+        if cache_path and cache_path.exists():
+            cached_df = pd.read_csv(cache_path)
+            return self._finalize_result(df, cached_df, inplace)
+
         work_df = df if inplace or not self.copy else df.copy()
-        work_df = work_df.apply(self._impute_row, axis=1)
-        return work_df
+        imputed_df = work_df.apply(self._impute_row, axis=1)
+
+        if cache_path:
+            cache_path.parent.mkdir(parents=True, exist_ok=True)
+            imputed_df.to_csv(cache_path, index=False)
+
+        return self._finalize_result(df, imputed_df, inplace)
 
     def _impute_row(self, row: pd.Series) -> pd.Series:
         title = row[self.id_column]
@@ -408,6 +437,34 @@ class ArtistImputer:
             return value
         if isinstance(value, pd.Timestamp):
             return value.isoformat()
+        return str(value)
+
+    def _resolve_cache_path(
+        self,
+        cache_dir: Optional[str | Path],
+        use_cache: Optional[bool],
+    ) -> Optional[Path]:
+        cache_enabled = self.cache_enabled if use_cache is None else use_cache
+        if not cache_enabled:
+            return None
+        if cache_dir is not None:
+            base_dir = Path(cache_dir)
+        else:
+            base_dir = self.cache_dir
+        if base_dir is None:
+            return None
+        return Path(base_dir) / self.IMPUTED_FILENAME
+
+    def _finalize_result(
+        self,
+        original_df: pd.DataFrame,
+        result_df: pd.DataFrame,
+        inplace: bool,
+    ) -> pd.DataFrame:
+        if inplace:
+            original_df[result_df.columns] = result_df
+            return original_df
+        return result_df
 
 
     def _normalize_region_label(self, label: Optional[str]) -> Optional[str]:
