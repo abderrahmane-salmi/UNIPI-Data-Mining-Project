@@ -18,6 +18,11 @@ import pandas as pd
 
 WIKIPEDIA_API = "https://it.wikipedia.org/w/api.php"
 WIKIDATA_ENTITY = "https://www.wikidata.org/wiki/Special:EntityData/{id}.json"
+PROVINCE_PREFIX_RE = re.compile(
+    r"^(?:provincia|citt[àa] metropolitana|provincia autonoma)\s+"
+    r"(?:di|del|della|dello|dei|degli|delle|dell['’])\s+",
+    flags=re.IGNORECASE,
+)
 
 
 
@@ -58,6 +63,9 @@ class ArtistImputer:
 
         self._session = requests.Session()
         self._session.headers.update({"User-Agent": user_agent})
+        self._city_region_lookup = {
+            city.lower(): region for city, region in CITY_TO_REGION.items()
+        }
         self._title_to_qid: Dict[str, str] = {}
         self._entity_cache: Dict[str, Dict[str, Any]] = {}
         self._wiki_text_cache: Dict[tuple[str, str], str] = {}
@@ -378,22 +386,7 @@ class ArtistImputer:
             return False
 
     def _normalize_location_label(self, label: Optional[str]) -> Optional[str]:
-        if not label:
-            return None
-        cleaned = (
-            label.replace("–", "-")
-            .replace("’", "'")
-            .replace("  ", " ")
-            .strip()
-        )
-        if cleaned in REGIONS:
-            return cleaned
-        if cleaned in REGION_SYNONYMS:
-            return REGION_SYNONYMS[cleaned]
-        variant = cleaned.replace("-", " ")
-        if variant in REGION_SYNONYMS:
-            return REGION_SYNONYMS[variant]
-        return None
+        return self._normalize_region_label(label)
 
     @staticmethod
     def _strip_parenthetical(label: Optional[str]) -> Optional[str]:
@@ -402,6 +395,13 @@ class ArtistImputer:
         base = label.split("(")[0]
         base = base.split(",")[0]
         return base.strip()
+
+    @staticmethod
+    def _strip_province_prefix(label: Optional[str]) -> Optional[str]:
+        if not label:
+            return None
+        stripped = PROVINCE_PREFIX_RE.sub("", label).strip()
+        return stripped or None
 
     def _serialize_for_log(self, value: Any) -> Any:
         if isinstance(value, (str, int, float, bool)) or value is None:
@@ -419,14 +419,33 @@ class ArtistImputer:
             .replace("  ", " ")
             .strip()
         )
-        if cleaned in REGIONS or cleaned in CITY_TO_REGION.keys():
-            return cleaned
-        if cleaned in REGION_SYNONYMS:
-            return REGION_SYNONYMS[cleaned]
-        variant = cleaned.replace("-", " ")
-        if variant in REGION_SYNONYMS:
-            return REGION_SYNONYMS[variant]
+        candidates: List[str] = []
+
+        def add_candidate(value: Optional[str]) -> None:
+            if value and value not in candidates:
+                candidates.append(value)
+
+        add_candidate(cleaned)
+        add_candidate(self._strip_province_prefix(cleaned))
+        dashless = cleaned.replace("-", " ")
+        add_candidate(dashless)
+        add_candidate(self._strip_province_prefix(dashless))
+
+        for candidate in candidates:
+            normalized = self._match_region_candidate(candidate)
+            if normalized:
+                return normalized
         return None
+
+    def _match_region_candidate(self, candidate: str) -> Optional[str]:
+        if candidate in REGIONS:
+            return candidate
+        if candidate in REGION_SYNONYMS:
+            return REGION_SYNONYMS[candidate]
+        location_region = CITY_TO_REGION.get(candidate)
+        if location_region:
+            return location_region
+        return self._city_region_lookup.get(candidate.lower())
     
     def _log_imputation(
         self,

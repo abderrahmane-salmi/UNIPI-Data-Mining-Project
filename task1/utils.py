@@ -106,6 +106,42 @@ def check_numeric_range(df: pd.DataFrame, column: str, start: int|float, end:int
     return res
 
 
+def detect_outliers_iqr(series: pd.Series, k: float = 1.5) -> pd.Series:
+    """
+    Flags values that fall outside the IQR fence (Q1 - k*IQR, Q3 + k*IQR).
+
+    Parameters
+    ----------
+    series: pd.Series
+        Numeric series to inspect. It is coerced to numeric in case of object dtypes.
+    k: float
+        IQR multiplier (1.5 gives the classical Tukey fence).
+
+    Returns
+    -------
+    pd.Series
+        Boolean mask aligned with the original index where True marks an outlier.
+    """
+    if not isinstance(series, pd.Series):
+        raise TypeError("detect_outliers_iqr expects a pandas Series")
+
+    numeric = pd.to_numeric(series, errors="coerce")
+    q1 = numeric.quantile(0.25)
+    q3 = numeric.quantile(0.75)
+    iqr = q3 - q1
+
+    if pd.isna(iqr) or iqr == 0:
+        # If there is not enough spread we can't flag any point as an outlier
+        return pd.Series(False, index=series.index, name=f"{series.name}_is_outlier")
+
+    lower = q1 - k * iqr
+    upper = q3 + k * iqr
+    mask = (numeric < lower) | (numeric > upper)
+    mask = mask.fillna(False)
+    mask.name = f"{series.name}_is_outlier" if series.name else "is_outlier"
+    return mask
+
+
 def plot_categorical_distribution(
     series: pd.Series,
     *,
@@ -296,8 +332,21 @@ def plot_swear_words(df:pd.DataFrame, language: str ="IT", threshold: int = 20):
     plt.show()
 
 
-def plot_boxplot(df, column, by=None, title=None, figsize=(4, 6), outlier_col=None):
-    fig, ax = plt.subplots(figsize=figsize)
+def plot_boxplot(
+    df,
+    column,
+    by=None,
+    title=None,
+    figsize=(4, 6),
+    outlier_col=None,
+    ax: Axes | None = None,
+):
+    created_fig = False
+    if ax is None:
+        fig, ax = plt.subplots(figsize=figsize)
+        created_fig = True
+    else:
+        fig = ax.figure
     sns.boxplot(
         data=df,
         x=by,
@@ -350,8 +399,10 @@ def plot_boxplot(df, column, by=None, title=None, figsize=(4, 6), outlier_col=No
     ax.set_xlabel(by if by else "")
     ax.set_ylabel(column)
     fig.suptitle("")
-    plt.tight_layout()
-    plt.show()
+    fig.tight_layout()
+    if created_fig:
+        plt.show()
+    return fig
 
 
 italian_regions = {
