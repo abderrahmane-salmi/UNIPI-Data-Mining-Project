@@ -240,20 +240,23 @@ def plot_numerical(
     log_scale: bool = False,
     kde: bool = True,
     color: str | None = None,
+    ax: Axes | None = None,
+    figsize: tuple[float, float] = (6, 4),
 ) -> plt.Figure:
-   
-    data = series.dropna()
+    numeric = pd.to_numeric(series, errors="coerce").dropna()
 
-    fig = plt.figure(figsize=(6, 4))
-    ax = fig.add_subplot(111)
+    if ax is None:
+        fig, ax = plt.subplots(figsize=figsize)
+    else:
+        fig = ax.figure
 
-    if data.empty:
+    if numeric.empty:
         ax.text(0.5, 0.5, "No data available", ha="center", va="center")
         ax.set_xticks([])
         ax.set_yticks([])
     else:
         sns.histplot(
-            data,
+            numeric,
             ax=ax,
             kde=kde,
             bins=bins,
