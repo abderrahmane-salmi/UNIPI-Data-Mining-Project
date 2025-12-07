@@ -302,3 +302,18 @@ IMPUTABLE_EXTRACTORS = {
         if len((r.get("first-release-date") or "").split("-")) > 2 else None
     ),
 }
+
+# Spotify API extractors - maps DataFrame columns to Spotify track JSON response fields
+SPOTIFY_EXTRACTORS = {
+    "album_name": lambda t: t.get("album", {}).get("name"),
+    "album_release_date": lambda t: t.get("album", {}).get("release_date"),
+    "album_type": lambda t: t.get("album", {}).get("album_type"),
+    "disc_number": lambda t: t.get("disc_number"),
+    "track_number": lambda t: t.get("track_number"),
+    "duration_ms": lambda t: t.get("duration_ms"),
+    "popularity": lambda t: t.get("popularity"),
+    "explicit": lambda t: t.get("explicit"),
+    "name_artist": lambda t: t.get("artists", [{}])[0].get("name"),
+    "title": lambda t: t.get("name"),
+}
+
