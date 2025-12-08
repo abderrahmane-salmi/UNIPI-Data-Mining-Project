@@ -7,16 +7,17 @@ import time
 from pathlib import Path
 from typing import Any, Dict, Optional
 
+import lyricsgenius
 import pandas as pd
 import requests
+import spotipy
+from spotipy.oauth2 import SpotifyClientCredentials
 from mappings import *
 
 class TracksImputer:
     MUSICBRAINZ_ENDPOINT = "https://musicbrainz.org/ws/2/recording/"
-    SPOTIFY_TOKEN_URL = "https://accounts.spotify.com/api/token"
-    SPOTIFY_SEARCH_URL = "https://api.spotify.com/v1/search"
-    SPOTIFY_TRACK_URL = "https://api.spotify.com/v1/tracks/{id}"
     SPOTIFY_IMPUTED_FILENAME = "tracks_spotify_imputed.csv"
+    GENIUS_IMPUTED_FILENAME = "tracks_genius_imputed.csv"
 
     def __init__(
         self,
@@ -53,6 +54,25 @@ class TracksImputer:
         inplace: bool = False,
         cache_dir: str | Path | None = None,
     ) -> pd.DataFrame:
+        """Impute missing data using all APIs: Spotify -> MusicBrainz -> Genius."""
+        if not isinstance(df, pd.DataFrame):
+            raise TypeError("df must be a pandas DataFrame")
+        work_df = df if inplace or not self.copy else df.copy()
+
+        work_df = self.impute_from_spotify(work_df, inplace=True, cache_dir=cache_dir)
+        work_df = self.impute_from_musicbrainz(work_df, inplace=True, cache_dir=cache_dir)
+        work_df = self.impute_from_genius(work_df, inplace=True, cache_dir=cache_dir)
+
+        return self._finalize_result(df, work_df, inplace)
+
+    def impute_from_musicbrainz(
+        self,
+        df: pd.DataFrame,
+        *,
+        inplace: bool = False,
+        cache_dir: str | Path | None = None,
+    ) -> pd.DataFrame:
+        """Impute missing track data using MusicBrainz API."""
         if not isinstance(df, pd.DataFrame):
             raise TypeError("df must be a pandas DataFrame")
         work_df = df if inplace or not self.copy else df.copy()
@@ -65,7 +85,7 @@ class TracksImputer:
                 cached_df = pd.read_csv(cache_path)
                 return self._finalize_result(df, cached_df, inplace)
 
-        imputed_df = work_df.apply(self._impute_row, axis=1)
+        imputed_df = work_df.apply(self._impute_row_musicbrainz, axis=1)
 
         if cache_path is not None:
             cache_path.parent.mkdir(parents=True, exist_ok=True)
@@ -73,7 +93,7 @@ class TracksImputer:
 
         return self._finalize_result(df, imputed_df, inplace)
 
-    def _impute_row(self, row: pd.Series) -> pd.Series:
+    def _impute_row_musicbrainz(self, row: pd.Series) -> pd.Series:
         if not self._needs_imputation(row):
             return row
         title = self._clean(row.get(self.title_column))
@@ -200,34 +220,20 @@ class TracksImputer:
         self,
         df: pd.DataFrame,
         *,
-        client_id: str,
-        client_secret: str,
+        client_id: str = "4ed71a1313f248aa838aae7dcce8caef",
+        client_secret: str = "010f4b0914fe498dbefd66fa5c9e70e1",
         inplace: bool = False,
         cache_dir: str | Path | None = None,
         target_columns: Optional[list] = None,
     ) -> pd.DataFrame:
-        """Impute missing track data using the Spotify API.
-
-        Args:
-            df: DataFrame with track data.
-            client_id: Spotify API client ID.
-            client_secret: Spotify API client secret.
-            inplace: If True, modify df in place.
-            cache_dir: Directory for caching results.
-            target_columns: Columns to impute (defaults to SPOTIFY_EXTRACTORS keys).
-
-        Returns:
-            DataFrame with imputed values.
-        """
+        """Impute missing track data using the Spotify API via spotipy."""
         if not isinstance(df, pd.DataFrame):
             raise TypeError("df must be a pandas DataFrame")
         work_df = df if inplace or not self.copy else df.copy()
 
-        # Get Spotify access token
-        self._spotify_token = self._get_spotify_token(client_id, client_secret)
-        if not self._spotify_token:
-            raise ValueError("Failed to obtain Spotify access token")
-
+        self._spotify = spotipy.Spotify(auth_manager=SpotifyClientCredentials(
+            client_id=client_id, client_secret=client_secret
+        ))
         self._spotify_target_columns = target_columns or list(SPOTIFY_EXTRACTORS.keys())
 
         cache_path: Path | None = None
@@ -235,8 +241,7 @@ class TracksImputer:
             cache_dir = Path(cache_dir)
             cache_path = cache_dir / self.SPOTIFY_IMPUTED_FILENAME
             if cache_path.exists():
-                cached_df = pd.read_csv(cache_path)
-                return self._finalize_result(df, cached_df, inplace)
+                return self._finalize_result(df, pd.read_csv(cache_path), inplace)
 
         imputed_df = work_df.apply(self._impute_row_spotify, axis=1)
 
@@ -246,74 +251,9 @@ class TracksImputer:
 
         return self._finalize_result(df, imputed_df, inplace)
 
-    def _get_spotify_token(self, client_id: str, client_secret: str) -> Optional[str]:
-        """Obtain an access token using the Client Credentials flow."""
-        import base64
-
-        credentials = f"{client_id}:{client_secret}"
-        encoded = base64.b64encode(credentials.encode()).decode()
-
-        headers = {
-            "Authorization": f"Basic {encoded}",
-            "Content-Type": "application/x-www-form-urlencoded",
-        }
-        data = {"grant_type": "client_credentials"}
-
-        try:
-            response = requests.post(
-                self.SPOTIFY_TOKEN_URL,
-                headers=headers,
-                data=data,
-                timeout=self.timeout,
-            )
-            response.raise_for_status()
-            return response.json().get("access_token")
-        except (requests.RequestException, ValueError):
-            return None
-
-    def _search_spotify_track(
-        self, title: str, artist: Optional[str]
-    ) -> Optional[Dict[str, Any]]:
-        """Search Spotify for a track and return the first result."""
-        query = f'track:"{title}"'
-        if artist:
-            query += f' artist:"{artist}"'
-
-        headers = {"Authorization": f"Bearer {self._spotify_token}"}
-        params = {"q": query, "type": "track", "limit": 1}
-
-        self._respect_rate_limit()
-        try:
-            response = self._session.get(
-                self.SPOTIFY_SEARCH_URL,
-                headers=headers,
-                params=params,
-                timeout=self.timeout,
-            )
-            response.raise_for_status()
-            data = response.json()
-        except (requests.RequestException, ValueError):
-            return None
-
-        tracks = data.get("tracks", {}).get("items", [])
-        return tracks[0] if tracks else None
-
-    def _fetch_spotify_track(self, track_id: str) -> Optional[Dict[str, Any]]:
-        """Fetch full track data by Spotify ID."""
-        headers = {"Authorization": f"Bearer {self._spotify_token}"}
-        url = self.SPOTIFY_TRACK_URL.format(id=track_id)
-
-        self._respect_rate_limit()
-        try:
-            response = self._session.get(url, headers=headers, timeout=self.timeout)
-            response.raise_for_status()
-            return response.json()
-        except (requests.RequestException, ValueError):
-            return None
-
     def _impute_row_spotify(self, row: pd.Series) -> pd.Series:
-        """Impute a single row using Spotify data."""
-        if not self._needs_imputation_spotify(row):
+        """Impute a single row using Spotify data with Fetch & Validate strategy."""
+        if not any(self._is_missing(row.get(c)) for c in self._spotify_target_columns if c in row.index):
             return row
 
         title = self._clean(row.get(self.title_column))
@@ -321,40 +261,162 @@ class TracksImputer:
         if not title:
             return row
 
-        # Search for the track on Spotify
-        track = self._search_spotify_track(title, artist)
+        self._respect_rate_limit()  # Rate limit between searches, not between fallbacks
+        track = self._search_spotify_validated(title, artist)
         if not track:
             return row
 
         applied: Dict[str, Any] = {}
-        for column, fn in (
-            (c, f) for c, f in SPOTIFY_EXTRACTORS.items() if c in self._spotify_target_columns
-        ):
-            if column not in row.index:
-                continue
-            if self.overwrite_existing or self._is_missing(row[column]):
-                value = fn(track)
-                if value is not None:
-                    row[column] = value
-                    applied[column] = value
+        for col, fn in ((c, f) for c, f in SPOTIFY_EXTRACTORS.items() if c in self._spotify_target_columns and c in row.index):
+            if self.overwrite_existing or self._is_missing(row[col]):
+                if (val := fn(track)) is not None:
+                    row[col], applied[col] = val, val
 
         if applied:
-            self._log_imputation(
-                row.name, row.get(self.title_column), row.get("id"), applied
-            )
+            self._log_imputation(row.name, row.get(self.title_column), row.get("id"), applied)
         return row
 
-    def _needs_imputation_spotify(self, row: pd.Series) -> bool:
-        """Check if the row needs any Spotify-based imputation."""
-        return any(
-            self._is_missing(row.get(col))
-            for col in self._spotify_target_columns
-            if col in row.index
+    def _search_spotify_validated(self, title: str, artist: Optional[str], min_score: int = 70) -> Optional[Dict[str, Any]]:
+        """Search Spotify with Fetch & Validate: 2 stages, fuzzy matching on candidates."""
+        import re, unicodedata
+        from difflib import SequenceMatcher
+        
+        def normalize(text: str) -> str:
+            text = unicodedata.normalize('NFKD', text).encode('ascii', 'ignore').decode()
+            text = re.sub(r'\(.*?\)|\[.*?\]', '', text)
+            text = re.sub(r'\b(feat\.?|ft\.?|prod\.?|remix|remaster|explicit|clean|live|version|edit).*', '', text, flags=re.I)
+            return ' '.join(re.sub(r'[^\w\s]', '', text).lower().split())
+        
+        def similarity(a: str, b: str) -> int:
+            return int(SequenceMatcher(None, normalize(a), normalize(b)).ratio() * 100)
+        
+        def validate_candidates(items: list, orig_title: str, orig_artist: str) -> Optional[Dict[str, Any]]:
+            best, best_score = None, 0
+            for track in items:
+                track_title = track.get('name', '')
+                track_artist = track.get('artists', [{}])[0].get('name', '')
+                score = (similarity(orig_title, track_title) + similarity(orig_artist, track_artist)) // 2 if orig_artist else similarity(orig_title, track_title)
+                if score > best_score:
+                    best, best_score = track, score
+            return best if best_score >= min_score else None
+        
+        norm_title, norm_artist = normalize(title), normalize(artist) if artist else ''
+        
+        # Stage 1: Strict search (original title + artist)
+        # Stage 2: Loose search (normalized)
+        queries = [
+            f'track:"{title}"' + (f' artist:"{artist}"' if artist else ''),
+            f'{norm_title} {norm_artist}'.strip(),
+        ]
+        
+        for q in queries:
+            try:
+                items = self._spotify.search(q=q, type='track', limit=5).get('tracks', {}).get('items', [])
+                if items and (match := validate_candidates(items, title, artist or '')):
+                    return match
+            except Exception:
+                continue
+        return None
+
+    def impute_from_genius(
+        self,
+        df: pd.DataFrame,
+        *,
+        genius_token: str = "59aKiFTVIt5tjAVyDv1f24vJhZ8ymHTcDDonFTuBhrohULgP7eG38hKquCvsSK1s",
+        inplace: bool = False,
+        cache_dir: str | Path | None = None,
+    ) -> pd.DataFrame:
+        """Impute missing lyrics using the Genius API.
+
+        Args:
+            df: DataFrame with track data.
+            genius_token: Genius API access token (required).
+            inplace: If True, modify df in place.
+            cache_dir: Directory for caching results.
+
+        Returns:
+            DataFrame with imputed lyrics.
+        """
+        if not isinstance(df, pd.DataFrame):
+            raise TypeError("df must be a pandas DataFrame")
+        work_df = df if inplace or not self.copy else df.copy()
+
+        # Initialize Genius client
+        self._genius_client = lyricsgenius.Genius(genius_token)
+        self._genius_client.verbose = False
+        self._genius_client.remove_section_headers = True
+
+        cache_path: Path | None = None
+        if cache_dir is not None:
+            cache_dir = Path(cache_dir)
+            cache_path = cache_dir / self.GENIUS_IMPUTED_FILENAME
+            if cache_path.exists():
+                cached_df = pd.read_csv(cache_path)
+                return self._finalize_result(df, cached_df, inplace)
+
+        imputed_df = work_df.apply(self._impute_row_genius, axis=1)
+
+        if cache_path is not None:
+            cache_path.parent.mkdir(parents=True, exist_ok=True)
+            imputed_df.to_csv(cache_path, index=False)
+
+        return self._finalize_result(df, imputed_df, inplace)
+
+    def _impute_row_genius(self, row: pd.Series) -> pd.Series:
+        """Impute lyrics for a single row using Genius data."""
+        # Check if lyrics already exist
+        if "lyrics" in row.index and not self._is_missing(row["lyrics"]):
+            if not self.overwrite_existing:
+                return row
+
+        title = self._clean(row.get(self.title_column))
+        artist = self._clean(row.get(self.artist_column) or row.get("name_artist"))
+        if not title:
+            return row
+
+        # Fetch lyrics from Genius
+        lyrics = self._fetch_lyrics(title, artist)
+        if not lyrics:
+            return row
+
+        row["lyrics"] = lyrics
+        self._log_imputation(
+            row.name, row.get(self.title_column), row.get("id"), {"lyrics": lyrics}
         )
+        return row
+
+    def _fetch_lyrics(self, title: str, artist: Optional[str]) -> Optional[str]:
+        """Fetch lyrics from Genius API.
+
+        Args:
+            title: Track title.
+            artist: Artist name (optional but recommended).
+
+        Returns:
+            Lyrics string if found, None otherwise.
+        """
+        try:
+            song = self._genius_client.search_song(title, artist)
+            if song and song.lyrics:
+                return song.lyrics
+        except Exception:
+            # Handle timeout, connection errors, etc.
+            pass
+        return None
 
 
 if __name__ == "__main__":
-    tracks_df = pd.read_csv("datasets/tracks.csv")
+    print("Loading tracks.csv...")
+    tracks_df = pd.read_csv("../datasets/tracks.csv")
+    print(f"Loaded {len(tracks_df)} tracks")
+    
     imputer = TracksImputer()
-    imputer.impute(tracks_df, cache_dir=Path(__file__).resolve().parent)
-
+    cache_dir = Path(__file__).resolve().parent / "datasets"
+    
+    print("\n=== Running full imputation pipeline ===")
+    print("1. Spotify -> 2. MusicBrainz -> 3. Genius\n")
+    
+    result_df = imputer.impute(tracks_df)
+    
+    print(f"\nDone! Imputed {len(result_df)} tracks")
+    print(f"Columns: {list(result_df.columns)}")

@@ -107,6 +107,46 @@ def check_numeric_range(df: pd.DataFrame, column: str, start: int|float, end:int
     res.sort()
     return res
 
+def check_valid_lyrics(
+    df: pd.DataFrame,
+    lyrics_column: str = "lyrics",
+    title_column: str = "title",
+    min_length: int = 100,
+) -> List[Tuple[int, str]]:
+    """Check if lyrics are valid (not just title, reasonable length).
+    
+    Args:
+        df: DataFrame with lyrics and title columns.
+        lyrics_column: Name of the lyrics column.
+        title_column: Name of the title column.
+        min_length: Minimum character count for valid lyrics (default 100).
+    
+    Returns:
+        List of (index, reason) tuples for invalid lyrics.
+    """
+    res = []
+    for i in df.index:
+        lyrics = df.loc[i, lyrics_column]
+        title = df.loc[i, title_column] if title_column in df.columns else ""
+        
+        if pd.isna(lyrics) or not isinstance(lyrics, str):
+            continue  # skip missing values
+        
+        lyrics_clean = lyrics.strip().lower()
+        title_clean = str(title).strip().lower() if pd.notna(title) else ""
+        
+        # Check if lyrics are too short
+        if len(lyrics_clean) < min_length:
+            res.append((int(i), f"lyrics too short ({len(lyrics_clean)} chars, min {min_length})"))
+        # Check if lyrics are just the title (or title repeated)
+        elif title_clean and lyrics_clean.replace(title_clean, "").strip() == "":
+            res.append((int(i), "lyrics contain only title"))
+        elif title_clean and lyrics_clean == title_clean:
+            res.append((int(i), "lyrics equal to title"))
+    
+    res.sort()
+    return res
+
 
 def detect_outliers_iqr(series: pd.Series, k: float = 1.5) -> pd.Series:
     """
