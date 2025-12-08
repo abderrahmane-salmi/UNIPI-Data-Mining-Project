@@ -58,14 +58,32 @@ class TracksImputer:
         inplace: bool = False,
         cache_dir: str | Path | None = None,
     ) -> pd.DataFrame:
-        """Impute missing data using all APIs: Spotify -> MusicBrainz -> Genius."""
+        """Impute missing data using all APIs: Spotify -> MusicBrainz -> Genius.
+        
+        Uses a single cache file that accumulates results progressively.
+        """
         if not isinstance(df, pd.DataFrame):
             raise TypeError("df must be a pandas DataFrame")
+        
+        cache_path: Path | None = None
+        if cache_dir is not None:
+            cache_dir = Path(cache_dir)
+            cache_path = cache_dir / self.IMPUTED_FILENAME
+            if cache_path.exists():
+                cached_df = pd.read_csv(cache_path)
+                return self._finalize_result(df, cached_df, inplace)
+        
         work_df = df if inplace or not self.copy else df.copy()
-
-        work_df = self.impute_from_spotify(work_df, inplace=True, cache_dir=cache_dir)
-        work_df = self.impute_from_musicbrainz(work_df, inplace=True, cache_dir=cache_dir)
-        work_df = self.impute_from_genius(work_df, inplace=True, cache_dir=cache_dir)
+        
+        # Each API builds on previous results (no individual cache)
+        work_df = self.impute_from_spotify(work_df, inplace=True)
+        work_df = self.impute_from_musicbrainz(work_df, inplace=True)
+        work_df = self.impute_from_genius(work_df, inplace=True)
+        
+        # Save final combined result
+        if cache_path is not None:
+            cache_path.parent.mkdir(parents=True, exist_ok=True)
+            work_df.to_csv(cache_path, index=False)
 
         return self._finalize_result(df, work_df, inplace)
 
@@ -368,8 +386,7 @@ class TracksImputer:
         return self._finalize_result(df, imputed_df, inplace)
 
     def _impute_row_genius(self, row: pd.Series) -> pd.Series:
-        """Impute lyrics for a single row using Genius data."""
-        # Check if lyrics already exist
+        """Impute lyrics for a single row using Genius with validation."""
         if "lyrics" in row.index and not self._is_missing(row["lyrics"]):
             if not self.overwrite_existing:
                 return row
@@ -379,49 +396,85 @@ class TracksImputer:
         if not title:
             return row
 
-        # Fetch lyrics from Genius
-        lyrics = self._fetch_lyrics(title, artist)
+        self._respect_rate_limit()  # Rate limit between searches
+        lyrics = self._fetch_lyrics_validated(title, artist)
         if not lyrics:
             return row
 
         row["lyrics"] = lyrics
-        self._log_imputation(
-            row.name, row.get(self.title_column), row.get("id"), {"lyrics": lyrics}
-        )
+        self._log_imputation(row.name, row.get(self.title_column), row.get("id"), {"lyrics": "(lyrics)"})
         return row
 
-    def _fetch_lyrics(self, title: str, artist: Optional[str]) -> Optional[str]:
-        """Fetch lyrics from Genius API.
-
-        Args:
-            title: Track title.
-            artist: Artist name (optional but recommended).
-
-        Returns:
-            Lyrics string if found, None otherwise.
-        """
-        try:
-            song = self._genius_client.search_song(title, artist)
-            if song and song.lyrics:
-                return song.lyrics
-        except Exception:
-            # Handle timeout, connection errors, etc.
-            pass
+    def _fetch_lyrics_validated(self, title: str, artist: Optional[str], min_score: int = 60) -> Optional[str]:
+        """Fetch lyrics with fallback and validation."""
+        import re, unicodedata
+        from difflib import SequenceMatcher
+        
+        def normalize(text: str) -> str:
+            text = unicodedata.normalize('NFKD', text).encode('ascii', 'ignore').decode()
+            text = re.sub(r'\(.*?\)|\[.*?\]', '', text)
+            text = re.sub(r'\b(feat\.?|ft\.?|prod\.?|remix|remaster|explicit|clean|live|version).*', '', text, flags=re.I)
+            return ' '.join(re.sub(r'[^\w\s]', '', text).lower().split())
+        
+        def similarity(a: str, b: str) -> int:
+            return int(SequenceMatcher(None, normalize(a), normalize(b)).ratio() * 100)
+        
+        def validate_song(song, orig_title: str, orig_artist: str) -> bool:
+            if not song:
+                return False
+            title_score = similarity(orig_title, song.title)
+            artist_score = similarity(orig_artist, song.artist) if orig_artist else 100
+            return ((title_score + artist_score) // 2) >= min_score
+        
+        norm_title = normalize(title)
+        norm_artist = normalize(artist) if artist else ''
+        
+        # Stage 1: Original title + artist
+        # Stage 2: Normalized title + artist  
+        searches = [
+            (title, artist),
+            (norm_title, norm_artist if norm_artist else None),
+        ]
+        
+        for t, a in searches:
+            try:
+                song = self._genius_client.search_song(t, a)
+                if validate_song(song, title, artist or ''):
+                    return song.lyrics
+            except Exception:
+                continue
         return None
 
 
 if __name__ == "__main__":
-    print("Loading tracks.csv...")
+    print("=" * 50)
+    print("TracksImputer - Test Run")
+    print("=" * 50)
+    
+    # Load dataset
+    print("\n[1/4] Loading tracks.csv...")
     tracks_df = pd.read_csv("../datasets/tracks.csv")
-    print(f"Loaded {len(tracks_df)} tracks")
+    print(f"      Loaded {len(tracks_df)} tracks")
     
+    # Initialize imputer
     imputer = TracksImputer()
-    cache_dir = Path(__file__).resolve().parent / "datasets"
+    cache_dir = "../datasets/"
     
-    print("\n=== Running full imputation pipeline ===")
-    print("1. Spotify -> 2. MusicBrainz -> 3. Genius\n")
+    # Run imputation pipeline
+    print("\n[2/4] Running imputation pipeline...")
+    print("      Order: Spotify -> MusicBrainz -> Genius")
+    print(f"      Cache: {cache_dir}tracks_imputed.csv")
     
-    result_df = imputer.impute(tracks_df)
+    result_df = imputer.impute(tracks_df, cache_dir=cache_dir)
     
-    print(f"\nDone! Imputed {len(result_df)} tracks")
-    print(f"Columns: {list(result_df.columns)}")
+
+    print(f"      Rows: {len(result_df)}")
+    print(f"      Columns: {len(result_df.columns)}")
+    
+    sample_cols = ['title', 'album_name', 'duration_ms', 'popularity']
+    available_cols = [c for c in sample_cols if c in result_df.columns]
+    if available_cols:
+        print(result_df[available_cols].head(3).to_string())
+    
+    print("\n" + "=" * 50)
+    print("Done!")

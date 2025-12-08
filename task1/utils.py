@@ -911,3 +911,41 @@ def process_outlier_results(df, feature, results):
         print(outliers_df.sort_values(feature).head(5)[cols_to_show])
         print("\nTop 5 High Outliers:")
         print(outliers_df.sort_values(feature, ascending=False).head(5)[cols_to_show])
+
+
+def apply_transforms(
+    df: pd.DataFrame,
+    feature_transforms: Dict[str, Callable[[pd.Series], pd.Series]],
+    inplace: bool = False,
+) -> pd.DataFrame:
+    """Apply transformations to multiple features in a DataFrame.
+    
+    Args:
+        df: Input DataFrame.
+        feature_transforms: Dictionary mapping column names to transform functions.
+                           Each function takes a Series and returns a transformed Series.
+        inplace: If True, modify df in place. Otherwise return a copy.
+    
+    Returns:
+        DataFrame with transformed features.
+    
+    Example:
+        >>> transforms = {
+        ...     'duration_ms': lambda s: np.log1p(s),
+        ...     'popularity': lambda s: np.sqrt(s),
+        ... }
+        >>> df_transformed = apply_transforms(df, transforms)
+    """
+    result = df if inplace else df.copy()
+    
+    for feature, transform in feature_transforms.items():
+        if feature not in result.columns:
+            print(f"Warning: Column '{feature}' not found in DataFrame, skipping.")
+            continue
+        try:
+            result[feature] = transform(result[feature])
+        except Exception as e:
+            print(f"Error transforming '{feature}': {e}")
+    
+    return result
+
