@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import time
 from pathlib import Path
 from typing import Any, Dict, Optional
@@ -11,8 +12,11 @@ import lyricsgenius
 import pandas as pd
 import requests
 import spotipy
+from dotenv import load_dotenv
 from spotipy.oauth2 import SpotifyClientCredentials
 from mappings import *
+
+load_dotenv()
 
 class TracksImputer:
     MUSICBRAINZ_ENDPOINT = "https://musicbrainz.org/ws/2/recording/"
@@ -220,8 +224,8 @@ class TracksImputer:
         self,
         df: pd.DataFrame,
         *,
-        client_id: str = "4ed71a1313f248aa838aae7dcce8caef",
-        client_secret: str = "010f4b0914fe498dbefd66fa5c9e70e1",
+        client_id: Optional[str] = None,
+        client_secret: Optional[str] = None,
         inplace: bool = False,
         cache_dir: str | Path | None = None,
         target_columns: Optional[list] = None,
@@ -232,7 +236,8 @@ class TracksImputer:
         work_df = df if inplace or not self.copy else df.copy()
 
         self._spotify = spotipy.Spotify(auth_manager=SpotifyClientCredentials(
-            client_id=client_id, client_secret=client_secret
+            client_id=client_id or os.getenv('SPOTIFY_CLIENT_ID'),
+            client_secret=client_secret or os.getenv('SPOTIFY_CLIENT_SECRET')
         ))
         self._spotify_target_columns = target_columns or list(SPOTIFY_EXTRACTORS.keys())
 
@@ -322,7 +327,7 @@ class TracksImputer:
         self,
         df: pd.DataFrame,
         *,
-        genius_token: str = "59aKiFTVIt5tjAVyDv1f24vJhZ8ymHTcDDonFTuBhrohULgP7eG38hKquCvsSK1s",
+        genius_token: Optional[str] = None,
         inplace: bool = False,
         cache_dir: str | Path | None = None,
     ) -> pd.DataFrame:
@@ -342,7 +347,7 @@ class TracksImputer:
         work_df = df if inplace or not self.copy else df.copy()
 
         # Initialize Genius client
-        self._genius_client = lyricsgenius.Genius(genius_token)
+        self._genius_client = lyricsgenius.Genius(genius_token or os.getenv('GENIUS_TOKEN'))
         self._genius_client.verbose = False
         self._genius_client.remove_section_headers = True
 
