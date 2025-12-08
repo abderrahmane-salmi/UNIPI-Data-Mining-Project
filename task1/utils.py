@@ -107,6 +107,111 @@ def check_numeric_range(df: pd.DataFrame, column: str, start: int|float, end:int
     res.sort()
     return res
 
+def check_starting_year(
+    df: pd.DataFrame,
+    column: str = "year",
+    artists_df: pd.DataFrame | None = None,
+    artist_link_column: str = "id_artist",
+    artist_id_column: str = "id",
+    min_year: int = 1990,
+    max_year: int = 2025,
+) -> List[Tuple[int, str]]:
+    """Check that year/date values are valid and consistent with artist active_start and birth_date.
+    
+    Args:
+        df: DataFrame with track data.
+        column: Name of the year/date column ('year' or 'album_release_date').
+        artists_df: Optional DataFrame with artist data containing 'active_start' and 'birth_date'.
+        artist_link_column: Column in df that links to artists (default 'id_artist').
+        artist_id_column: Column in artists_df that identifies artists (default 'id').
+        min_year: Minimum valid year (default 1990).
+        max_year: Maximum valid year (default: current year).
+    
+    Returns:
+        List of (index, reason) tuples for invalid years.
+    """
+    
+    res = []
+    
+    # 1. Extract year from column (handle both int 'year' and string/date 'album_release_date')
+    if column not in df.columns:
+        raise ValueError(f"Column '{column}' not found in DataFrame")
+    
+    years = df[column].copy()
+    
+    # Convert to numeric, coercing errors - handles object, Int64, datetime etc.
+    if pd.api.types.is_datetime64_any_dtype(years):
+        years = years.dt.year.astype(float)
+    elif years.dtype == 'object' or str(years.dtype).startswith('Int'):
+        # Try datetime conversion first (for date strings)
+        converted = pd.to_datetime(years, errors='coerce')
+        if converted.notna().any():
+            years = converted.dt.year.astype(float)
+        else:
+            years = pd.to_numeric(years, errors='coerce').astype(float)
+    else:
+        years = pd.to_numeric(years, errors='coerce').astype(float)
+    
+    # 2. Check absolute bounds (Hard Limits)
+    mask_too_old = years.notna() & (years < min_year)
+    mask_too_new = years.notna() & (years > max_year)
+    
+    res.extend([(int(i), f"year {int(years.loc[i])} before {min_year}") for i in df.index[mask_too_old]])
+    res.extend([(int(i), f"year {int(years.loc[i])} after {max_year}") for i in df.index[mask_too_new]])
+    
+    # 3. Check against artist info (active_start AND birth_date)
+    if artists_df is not None and artist_link_column in df.columns:
+        
+        # Helper function to extract year as float
+        def extract_year_float(series: pd.Series) -> pd.Series:
+            if pd.api.types.is_datetime64_any_dtype(series):
+                return series.dt.year.astype(float)
+            elif series.dtype == 'object' or str(series.dtype).startswith('Int'):
+                converted = pd.to_datetime(series, errors='coerce')
+                if converted.notna().any():
+                    return converted.dt.year.astype(float)
+                return pd.to_numeric(series, errors='coerce').astype(float)
+            return pd.to_numeric(series, errors='coerce').astype(float)
+        
+        # A. Active Start
+        artist_start_years = None
+        if 'active_start' in artists_df.columns:
+            artist_start_years = extract_year_float(
+                artists_df.set_index(artist_id_column)['active_start']
+            )
+        
+        # B. Birth Date
+        artist_birth_years = None
+        if 'birth_date' in artists_df.columns:
+            artist_birth_years = extract_year_float(
+                artists_df.set_index(artist_id_column)['birth_date']
+            )
+
+        # --- Validation Loop ---
+        for i in df.index:
+            track_year = years.loc[i]
+            artist_id = df.loc[i, artist_link_column]
+            
+            if pd.isna(track_year) or pd.isna(artist_id):
+                continue
+            
+            # Check 1: Active Start
+            if artist_start_years is not None and artist_id in artist_start_years.index:
+                artist_start = artist_start_years.loc[artist_id]
+                if pd.notna(artist_start) and track_year < artist_start:
+                    res.append((int(i), f"year {int(track_year)} before artist active_start {int(artist_start)}"))
+            
+            # Check 2: Birth Date + 15
+            if artist_birth_years is not None and artist_id in artist_birth_years.index:
+                birth_year = artist_birth_years.loc[artist_id]
+                if pd.notna(birth_year):
+                    min_age_year = birth_year + 15
+                    if track_year < min_age_year:
+                        res.append((int(i), f"year {int(track_year)} implied artist age < 15 (born {int(birth_year)})"))
+    
+    res.sort()
+    return res
+
 def check_valid_lyrics(
     df: pd.DataFrame,
     lyrics_column: str = "lyrics",
@@ -736,15 +841,31 @@ def analyze_feature(
     transforms: Dict[str, Callable[[pd.Series], pd.Series]]=default_transforms,
     outlier_function: Callable[[pd.Series], pd.Series]=detect_outliers_iqr,
     figsize: Tuple[int, int]=(12, 16),
-    colors: List[str]=['skyblue', 'lightgreen', 'salmon', 'orange']
+    colors: List[str]=['skyblue', 'lightgreen', 'salmon', 'orange'],
+    shift_threshold: float = 500
     ) -> Dict[str, Dict[str, Any]]:
+    """
+    Analyze a feature with multiple transformations and visualizations.
+    
+    If all values are > shift_threshold, the data is shifted to start from 0
+    to avoid numerical issues with transformations like Yeo-Johnson.
+    """
 
     series = df[feature].dropna()
+    
+    # Shift data if minimum is above threshold (e.g., years like 1990-2025)
+    shift_applied = 0
+    if series.min() > shift_threshold:
+        shift_applied = series.min()
+        series = series - shift_applied
+        print(f"⚠️ Data shifted by -{shift_applied} (original min > {shift_threshold})")
     
     results = {} 
     
     fig, axes = plt.subplots(len(transforms.keys()), 2, figsize=figsize)
-    fig.suptitle(f'Analisi Distribuzione & Outliers: {feature}', fontsize=16, y=1.02)
+    fig.suptitle(f'Analisi Distribuzione & Outliers: {feature}' + 
+                 (f' (shifted by -{shift_applied})' if shift_applied else ''), 
+                 fontsize=16, y=1.02)
     
     for i, (name, transform) in enumerate(transforms.items()):
         data = transform(series)
@@ -758,7 +879,8 @@ def analyze_feature(
             'distribution': data,
             'outliers_mask': outliers_mask, 
             'num_outliers': num_outliers,
-            'stats': {'skew': skew, 'kurt': kurt}
+            'stats': {'skew': skew, 'kurt': kurt},
+            'shift_applied': shift_applied
         }
         
         color = colors[i]

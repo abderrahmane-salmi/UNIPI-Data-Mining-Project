@@ -49,7 +49,7 @@ class TracksImputer:
         self._session.headers.update({"User-Agent": user_agent, "Accept": "application/json"})
         self._last_request = 0.0
 
-    IMPUTED_FILENAME = "tracks_imputed.csv"
+    IMPUTED_FILENAME = "imputed_tracks.csv"
 
     def impute(
         self,
@@ -69,7 +69,9 @@ class TracksImputer:
         if cache_dir is not None:
             cache_dir = Path(cache_dir)
             cache_path = cache_dir / self.IMPUTED_FILENAME
+            print(cache_path)
             if cache_path.exists():
+
                 cached_df = pd.read_csv(cache_path)
                 return self._finalize_result(df, cached_df, inplace)
         
@@ -365,7 +367,7 @@ class TracksImputer:
         work_df = df if inplace or not self.copy else df.copy()
 
         # Initialize Genius client
-        self._genius_client = lyricsgenius.Genius(genius_token or os.getenv('GENIUS_TOKEN'))
+        self._genius_client = lyricsgenius.Genius(genius_token or os.getenv('GENIUS_ACCESS_TOKEN'))
         self._genius_client.verbose = False
         self._genius_client.remove_section_headers = True
 
@@ -428,9 +430,7 @@ class TracksImputer:
         
         norm_title = normalize(title)
         norm_artist = normalize(artist) if artist else ''
-        
-        # Stage 1: Original title + artist
-        # Stage 2: Normalized title + artist  
+
         searches = [
             (title, artist),
             (norm_title, norm_artist if norm_artist else None),
@@ -439,8 +439,14 @@ class TracksImputer:
         for t, a in searches:
             try:
                 song = self._genius_client.search_song(t, a)
-                if validate_song(song, title, artist or ''):
-                    return song.lyrics
+                
+                if song:
+                    if validate_song(song, title, artist or ''):
+                        print(f"Found song: {song.title} by {song.artist}, lyrics: {song.lyrics}")
+                        return song.lyrics
+                else:
+                    continue
+
             except Exception:
                 continue
         return None
@@ -453,7 +459,7 @@ if __name__ == "__main__":
     
     # Load dataset
     print("\n[1/4] Loading tracks.csv...")
-    tracks_df = pd.read_csv("../datasets/tracks.csv")
+    tracks_df = pd.read_csv("../datasets/imputed_tracks.csv")
     print(f"      Loaded {len(tracks_df)} tracks")
     
     # Initialize imputer
@@ -465,7 +471,7 @@ if __name__ == "__main__":
     print("      Order: Spotify -> MusicBrainz -> Genius")
     print(f"      Cache: {cache_dir}tracks_imputed.csv")
     
-    result_df = imputer.impute(tracks_df, cache_dir=cache_dir)
+    result_df = imputer.impute_from_genius(tracks_df)
     
 
     print(f"      Rows: {len(result_df)}")
