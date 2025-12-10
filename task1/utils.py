@@ -107,6 +107,9 @@ def check_numeric_range(df: pd.DataFrame, column: str, start: int|float, end:int
     res.sort()
     return res
 
+import pandas as pd
+from typing import List, Tuple
+
 def check_starting_year(
     df: pd.DataFrame,
     column: str = "year",
@@ -116,78 +119,77 @@ def check_starting_year(
     min_year: int = 1990,
     max_year: int = 2025,
 ) -> List[Tuple[int, str]]:
-    """Check that year/date values are valid and consistent with artist active_start and birth_date.
-    
-    Args:
-        df: DataFrame with track data.
-        column: Name of the year/date column ('year' or 'album_release_date').
-        artists_df: Optional DataFrame with artist data containing 'active_start' and 'birth_date'.
-        artist_link_column: Column in df that links to artists (default 'id_artist').
-        artist_id_column: Column in artists_df that identifies artists (default 'id').
-        min_year: Minimum valid year (default 1990).
-        max_year: Maximum valid year (default: current year).
-    
-    Returns:
-        List of (index, reason) tuples for invalid years.
-    """
     
     res = []
     
-    # 1. Extract year from column (handle both int 'year' and string/date 'album_release_date')
     if column not in df.columns:
         raise ValueError(f"Column '{column}' not found in DataFrame")
     
-    years = df[column].copy()
+    raw_vals = df[column].copy()
     
-    # Convert to numeric, coercing errors - handles object, Int64, datetime etc.
-    if pd.api.types.is_datetime64_any_dtype(years):
-        years = years.dt.year.astype(float)
-    elif years.dtype == 'object' or str(years.dtype).startswith('Int'):
-        # Try datetime conversion first (for date strings)
-        converted = pd.to_datetime(years, errors='coerce')
-        if converted.notna().any():
-            years = converted.dt.year.astype(float)
-        else:
-            years = pd.to_numeric(years, errors='coerce').astype(float)
+    # --- FIX CRUCIALE: Logica di Conversione Robusta ---
+    years = pd.Series(index=df.index, dtype=float)
+    
+    # Caso 1: È già una data (Datetime)
+    if pd.api.types.is_datetime64_any_dtype(raw_vals):
+        years = raw_vals.dt.year.astype(float)
+        
+    # Caso 2: È numerico o stringa che sembra un numero (es. "2020", 2020)
+    # Proviamo PRIMA a convertirlo in numero puro. 
+    # pd.to_numeric gestisce "2020" -> 2020.0 correttamente.
     else:
-        years = pd.to_numeric(years, errors='coerce').astype(float)
+        numeric_conversion = pd.to_numeric(raw_vals, errors='coerce')
+        
+        # Se la conversione numerica ha funzionato per la maggior parte dei dati
+        # e i valori sembrano anni (es. > 1900), usiamo quella.
+        if numeric_conversion.notna().sum() > 0 and numeric_conversion.mean() > 1000:
+             years = numeric_conversion.astype(float)
+             
+        # Caso 3: Fallback data (es. "2020-05-12")
+        # Solo se non sembra un numero semplice, proviamo il parsing data
+        else:
+            as_datetime = pd.to_datetime(raw_vals, errors='coerce')
+            years = as_datetime.dt.year.astype(float)
+
+    # ----------------------------------------------------
     
-    # 2. Check absolute bounds (Hard Limits)
+    # 2. Check Absolute Bounds
     mask_too_old = years.notna() & (years < min_year)
     mask_too_new = years.notna() & (years > max_year)
     
     res.extend([(int(i), f"year {int(years.loc[i])} before {min_year}") for i in df.index[mask_too_old]])
     res.extend([(int(i), f"year {int(years.loc[i])} after {max_year}") for i in df.index[mask_too_new]])
     
-    # 3. Check against artist info (active_start AND birth_date)
+    # 3. Check against Artist Info
     if artists_df is not None and artist_link_column in df.columns:
         
-        # Helper function to extract year as float
-        def extract_year_float(series: pd.Series) -> pd.Series:
-            if pd.api.types.is_datetime64_any_dtype(series):
-                return series.dt.year.astype(float)
-            elif series.dtype == 'object' or str(series.dtype).startswith('Int'):
-                converted = pd.to_datetime(series, errors='coerce')
-                if converted.notna().any():
-                    return converted.dt.year.astype(float)
-                return pd.to_numeric(series, errors='coerce').astype(float)
-            return pd.to_numeric(series, errors='coerce').astype(float)
-        
-        # A. Active Start
+        # Helper interno semplificato
+        def get_years_from_series(s):
+            # Se è datetime
+            if pd.api.types.is_datetime64_any_dtype(s):
+                return s.dt.year.astype(float)
+            # Altrimenti prova numero
+            nums = pd.to_numeric(s, errors='coerce')
+            if nums.mean() > 1000: # Euristica: se media > 1000 sono probabili anni
+                return nums
+            # Altrimenti prova data
+            return pd.to_datetime(s, errors='coerce').dt.year.astype(float)
+
+        # Preparazione dati artista
         artist_start_years = None
+        artist_birth_years = None
+        
         if 'active_start' in artists_df.columns:
-            artist_start_years = extract_year_float(
+            artist_start_years = get_years_from_series(
                 artists_df.set_index(artist_id_column)['active_start']
             )
-        
-        # B. Birth Date
-        artist_birth_years = None
+            
         if 'birth_date' in artists_df.columns:
-            artist_birth_years = extract_year_float(
+            artist_birth_years = get_years_from_series(
                 artists_df.set_index(artist_id_column)['birth_date']
             )
 
-        # --- Validation Loop ---
+        # Loop di validazione
         for i in df.index:
             track_year = years.loc[i]
             artist_id = df.loc[i, artist_link_column]
@@ -195,13 +197,14 @@ def check_starting_year(
             if pd.isna(track_year) or pd.isna(artist_id):
                 continue
             
-            # Check 1: Active Start
+            # Check Active Start
             if artist_start_years is not None and artist_id in artist_start_years.index:
                 artist_start = artist_start_years.loc[artist_id]
-                if pd.notna(artist_start) and track_year < artist_start:
+                # Tolleranza di 1 anno per differenze di release tra paesi
+                if pd.notna(artist_start) and track_year < (artist_start - 1):
                     res.append((int(i), f"year {int(track_year)} before artist active_start {int(artist_start)}"))
             
-            # Check 2: Birth Date + 15
+            # Check Birth Date + 15
             if artist_birth_years is not None and artist_id in artist_birth_years.index:
                 birth_year = artist_birth_years.loc[artist_id]
                 if pd.notna(birth_year):
@@ -740,100 +743,13 @@ def get_yeo_johnson(series):
     return pd.Series(pt.fit_transform(series.values.reshape(-1, 1)).flatten(), index=series.index)
 
 
-
-def analyze_feature_comprehensive(df, feature, bounds=None):
-    """
-    Analyze a feature with multiple transformations and visualizations.
-    
-    Parameters:
-    -----------
-    df : pd.DataFrame
-        Input dataframe
-    feature : str
-        Name of the feature to analyze
-    bounds : tuple, optional
-        (min, max) tuple for domain validity check
-    """
-    print(f"--- Comprehensive Analysis for '{feature}' ---")
-    series = df[feature].dropna()
-    
-    # 1. Domain Check
-    if bounds:
-        min_bound, max_bound = bounds
-        invalid = df[(df[feature] <= min_bound) | (df[feature] > max_bound)]
-        if len(invalid) > 0:
-            print(f"\nPotential Data Errors ({feature} <= {min_bound} or > {max_bound}): {len(invalid)}")
-            cols_to_show = ['artist_name', 'track_name', feature] if 'artist_name' in df.columns else [feature]
-            if 'name_artist' in df.columns: # Handle alternative column names
-                 cols_to_show = ['name_artist', 'title', feature]
-            print(invalid[cols_to_show].head())
-    
-    # Prepare Transformations
-    # Original
-    outliers_orig = detect_outliers_iqr(series)
-    skew_orig = series.skew()
-    kurt_orig = series.kurtosis()
-    
-    # Log1p
-    min_val = series.min()
-    series_shifted = series - min_val if min_val < 0 else series
-    log_series = np.log1p(series_shifted)
-    outliers_log = detect_outliers_iqr(log_series)
-    skew_log = log_series.skew()
-    kurt_log = log_series.kurtosis()
-    
-    # Sqrt
-    sqrt_series = np.sqrt(series_shifted)
-    outliers_sqrt = detect_outliers_iqr(sqrt_series)
-    skew_sqrt = sqrt_series.skew()
-    kurt_sqrt = sqrt_series.kurtosis()
-    
-    # Yeo-Johnson
-    yj_series = get_yeo_johnson(series)
-    outliers_yj = detect_outliers_iqr(yj_series)
-    skew_yj = yj_series.skew()
-    kurt_yj = yj_series.kurtosis()
-    
-    # 2. Visualization
-    fig, axes = plt.subplots(4, 2, figsize=(10, 15))
-    fig.suptitle(f'Feature Analysis: {feature}', fontsize=16)
-    
-    methods = [
-        ('Original', series, outliers_orig, skew_orig, 'skyblue'),
-        ('Log1p', log_series, outliers_log, skew_log, 'lightgreen'),
-        ('Sqrt', sqrt_series, outliers_sqrt, skew_sqrt, 'salmon'),
-        ('Yeo-Johnson', yj_series, outliers_yj, skew_yj, 'orange')
-    ]
-    
-    for i, (name, data, outliers, skew, color) in enumerate(methods):
-        # Distribution Plot (Left)
-        sns.histplot(data, kde=True, ax=axes[i, 0], color=color)
-        axes[i, 0].set_title(f'{name} Distribution (Skew: {skew:.2f})')
-        
-        # Horizontal Boxplot (Right)
-        sns.boxplot(x=data, ax=axes[i, 1], color=color, orient='h')
-        axes[i, 1].set_title(f'{name} Boxplot (Outliers: {outliers.sum()})')
-        
-        # Highlight outliers on boxplot (optional, but boxplot does it natively)
-        # We can add strip plot for better visibility if needed, but boxplot is usually enough
-    
-    plt.tight_layout(rect=[0, 0.03, 1, 0.95])
-    plt.show()
-
-    return {
-        'Orig Outliers': outliers_orig.sum(), 'Orig Skew': skew_orig, 'Orig Kurt': kurt_orig,
-        'Log Outliers': outliers_log.sum(), 'Log Skew': skew_log, 'Log Kurt': kurt_log,
-        'Sqrt Outliers': outliers_sqrt.sum(), 'Sqrt Skew': skew_sqrt, 'Sqrt Kurt': kurt_sqrt,
-        'YJ Outliers': outliers_yj.sum(), 'YJ Skew': skew_yj, 'YJ Kurt': kurt_yj
+default_transforms = {
+        'default': lambda x: x,
+        'log': lambda x: np.log1p(x if x.min() > 0 else x + abs(x.min()) + 1),
+        'sqrt': lambda x: np.sqrt(x if x.min() >= 0 else x + abs(x.min()) + 1),
+        'yeo-johnson': get_yeo_johnson
     }
 
-
-default_transforms = {
-    'Default': lambda series: series,
-    'Log': lambda series: np.log1p(series if series.min() > 0 else series + abs(series.min()) + 1),
-    'Sqrt': lambda series: np.sqrt(series if series.min() >= 0 else series + abs(series.min()) + 1),
-    'Yeo-Johnson': lambda series: pd.Series(stats.yeojohnson(series)[0], index=series.index)
-}
     
 def analyze_feature(
     df: pd.DataFrame,
@@ -858,7 +774,7 @@ def analyze_feature(
     if series.min() > shift_threshold:
         shift_applied = series.min()
         series = series - shift_applied
-        print(f"⚠️ Data shifted by -{shift_applied} (original min > {shift_threshold})")
+        print(f" Data shifted by -{shift_applied} (original min > {shift_threshold})")
     
     results = {} 
     
@@ -900,140 +816,6 @@ def analyze_feature(
     return results
 
 
-def process_outlier_results(df, feature, results):
-    """
-    Process results from analyze_feature_comprehensive to determine best transformation
-    and detect outliers.
-    """
-    if results is None:
-        return
-        
-    # Re-structuring the result for DataFrame display
-    methods = ['Original', 'Log1p', 'Sqrt', 'Yeo-Johnson']
-    # Ensure values are extracted correctly
-    outliers = [
-        results['Orig Outliers'],
-        results['Log Outliers'],
-        results['Sqrt Outliers'],
-        results['YJ Outliers']
-    ]
-    skews = [
-        results['Orig Skew'],
-        results['Log Skew'],
-        results['Sqrt Skew'],
-        results['YJ Skew']
-    ]
-    kurts = [
-        results['Orig Kurt'],
-        results['Log Kurt'],
-        results['Sqrt Kurt'],
-        results['YJ Kurt']
-    ]
-    
-    # Handle NaNs by replacing them with infinity so they are not selected
-    scores = []
-    for s, k in zip(skews, kurts):
-        if pd.isna(s) or pd.isna(k):
-            scores.append(np.inf)
-        else:
-            scores.append(abs(s) + abs(k))
-    
-    results_df = pd.DataFrame({
-        'Method': methods,
-        'Outliers': outliers,
-        'Skewness': skews,
-        'Kurtosis': kurts,
-        'Score': scores
-    })
-    
-    display(results_df)
-    
-    # Identify best transformation (lowest Score)
-    # If all scores are inf (e.g. all NaNs), default to Original
-    if results_df['Score'].min() == np.inf:
-        print(f"Warning: Could not calculate valid scores for {feature}. Defaulting to Original.")
-        best_method = 'Original'
-        best_score = np.nan
-    else:
-        best_method_row = results_df.loc[results_df['Score'].idxmin()]
-        best_method = best_method_row['Method']
-        best_score = best_method_row['Score']
-    
-    print(f"Best transformation for {feature}: {best_method} (Score: {best_score:.4f})")
-    
-    # Apply best transformation to generate outlier mask (Detection Only)
-    series = df[feature].dropna()
-    if series.empty:
-        print(f"No data for {feature} to detect outliers.")
-        univariate_outlier_masks[feature] = pd.Series(False, index=df.index, dtype=bool)
-        return
-
-    if best_method == 'Log1p':
-        min_val = series.min()
-        series_shifted = series - min_val if min_val < 0 else series
-        transformed = np.log1p(series_shifted)
-    elif best_method == 'Sqrt':
-        min_val = series.min()
-        series_shifted = series - min_val if min_val < 0 else series
-        transformed = np.sqrt(series_shifted)
-    elif best_method == 'Yeo-Johnson':
-        transformed = get_yeo_johnson(series)
-    else:
-        transformed = series
-        
-    outlier_mask, outlier_scores = detect_outliers_iqr_with_score(transformed)
-    outlier_count = outlier_mask.sum()
-    
-    # Store the mask
-    # Initialize full mask as False, explicitly numpy bool
-    full_mask = pd.Series(False, index=df.index, dtype=bool)
-    full_scores = pd.Series(0.0, index=df.index, dtype=float)
-    
-    # Set True only for detected outliers
-    # outlier_mask is a boolean Series on the subset (non-nulls).
-    # We get indices where it is True.
-    if outlier_count > 0:
-        outlier_indices = outlier_mask[outlier_mask].index
-        # Ensure indices are valid for full_mask
-        valid_indices = outlier_indices.intersection(full_mask.index)
-        full_mask.loc[valid_indices] = True
-        
-        # Store scores
-        full_scores.loc[transformed.index] = outlier_scores
-    
-    if outlier_count > 0:
-        # Update global outlier columns if they exist
-        if 'outlier' in df.columns:
-             df['outlier'] = df['outlier'] | full_mask
-        if 'outlier_score' in df.columns:
-             df['outlier_score'] = df['outlier_score'].where(~full_mask, np.maximum(df['outlier_score'], full_scores))
-
-        print(f"Detected {outlier_count} outliers for {feature} using {best_method} transformation (Mask stored).")
-    else:
-        print(f"No outliers detected for {feature} using {best_method} transformation.")
-    
-     # 3. Inspect Top Outliers (Original)
-    if outliers_orig.sum() > 0:
-        q1 = series.quantile(0.25)
-        q3 = series.quantile(0.75)
-        iqr = q3 - q1
-        lower = q1 - 1.5 * iqr
-        upper = q3 + 1.5 * iqr
-        
-        outliers_df = df.loc[series.index][(series < lower) | (series > upper)]
-        
-        print(f"\nOriginal IQR Bounds: {lower:.2f} - {upper:.2f}")
-        print(f"Total Outliers (Original): {len(outliers_df)}")
-        
-        cols_to_show = ['artist_name', 'track_name', feature] if 'artist_name' in df.columns else [feature]
-        if 'name_artist' in df.columns:
-             cols_to_show = ['name_artist', 'title', feature]
-             
-        print("\nTop 5 Low Outliers:")
-        print(outliers_df.sort_values(feature).head(5)[cols_to_show])
-        print("\nTop 5 High Outliers:")
-        print(outliers_df.sort_values(feature, ascending=False).head(5)[cols_to_show])
-
 
 def apply_transforms(
     df: pd.DataFrame,
@@ -1071,3 +853,28 @@ def apply_transforms(
     
     return result
 
+def apply_winsorization(analysis_res: dict, transform_name: str) -> pd.Series:
+    """
+    Applica winsorization usando i limiti già calcolati in analyze_feature.
+    Schiaccia gli outliers sui valori min/max degli inliers.
+    """
+    # 1. Estrai i dati calcolati
+    data_info = analysis_res[transform_name]
+    series = data_info['distribution']
+    is_outlier = data_info['outliers_mask']
+    
+    # 2. Trova i limiti sicuri (min e max dei dati NON outlier)
+    # ~is_outlier seleziona solo le righe False (inliers)
+    inliers = series[~is_outlier]
+    
+    if inliers.empty:
+        return series # Sicurezza se tutto è outlier
+        
+    lower_limit = inliers.min()
+    upper_limit = inliers.max()
+    
+    # 3. Winsorization (Clip)
+    # Tutti i valori sotto lower_limit diventano lower_limit
+    # Tutti i valori sopra upper_limit diventano upper_limit
+    print(f"Winsorizing '{transform_name}': clipped to range [{lower_limit:.4f}, {upper_limit:.4f}]")
+    return series.clip(lower=lower_limit, upper=upper_limit)
