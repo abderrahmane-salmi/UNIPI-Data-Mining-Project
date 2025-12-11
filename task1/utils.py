@@ -6,6 +6,8 @@ from matplotlib import pyplot as plt
 from matplotlib.axes import Axes
 from typing import List, Tuple, Dict, Callable, Any
 from pandas.api.types import CategoricalDtype
+from sklearn.preprocessing import PowerTransformer
+from IPython.display import display
 
 class DataQualityReporter():
     """
@@ -105,6 +107,154 @@ def check_numeric_range(df: pd.DataFrame, column: str, start: int|float, end:int
     res.sort()
     return res
 
+import pandas as pd
+from typing import List, Tuple
+
+def check_starting_year(
+    df: pd.DataFrame,
+    column: str = "year",
+    artists_df: pd.DataFrame | None = None,
+    artist_link_column: str = "id_artist",
+    artist_id_column: str = "id",
+    min_year: int = 1990,
+    max_year: int = 2025,
+) -> List[Tuple[int, str]]:
+    
+    res = []
+    
+    if column not in df.columns:
+        raise ValueError(f"Column '{column}' not found in DataFrame")
+    
+    raw_vals = df[column].copy()
+    
+    # --- FIX CRUCIALE: Logica di Conversione Robusta ---
+    years = pd.Series(index=df.index, dtype=float)
+    
+    # Caso 1: È già una data (Datetime)
+    if pd.api.types.is_datetime64_any_dtype(raw_vals):
+        years = raw_vals.dt.year.astype(float)
+        
+    # Caso 2: È numerico o stringa che sembra un numero (es. "2020", 2020)
+    # Proviamo PRIMA a convertirlo in numero puro. 
+    # pd.to_numeric gestisce "2020" -> 2020.0 correttamente.
+    else:
+        numeric_conversion = pd.to_numeric(raw_vals, errors='coerce')
+        
+        # Se la conversione numerica ha funzionato per la maggior parte dei dati
+        # e i valori sembrano anni (es. > 1900), usiamo quella.
+        if numeric_conversion.notna().sum() > 0 and numeric_conversion.mean() > 1000:
+             years = numeric_conversion.astype(float)
+             
+        # Caso 3: Fallback data (es. "2020-05-12")
+        # Solo se non sembra un numero semplice, proviamo il parsing data
+        else:
+            as_datetime = pd.to_datetime(raw_vals, errors='coerce')
+            years = as_datetime.dt.year.astype(float)
+
+    # ----------------------------------------------------
+    
+    # 2. Check Absolute Bounds
+    mask_too_old = years.notna() & (years < min_year)
+    mask_too_new = years.notna() & (years > max_year)
+    
+    res.extend([(int(i), f"year {int(years.loc[i])} before {min_year}") for i in df.index[mask_too_old]])
+    res.extend([(int(i), f"year {int(years.loc[i])} after {max_year}") for i in df.index[mask_too_new]])
+    
+    # 3. Check against Artist Info
+    if artists_df is not None and artist_link_column in df.columns:
+        
+        # Helper interno semplificato
+        def get_years_from_series(s):
+            # Se è datetime
+            if pd.api.types.is_datetime64_any_dtype(s):
+                return s.dt.year.astype(float)
+            # Altrimenti prova numero
+            nums = pd.to_numeric(s, errors='coerce')
+            if nums.mean() > 1000: # Euristica: se media > 1000 sono probabili anni
+                return nums
+            # Altrimenti prova data
+            return pd.to_datetime(s, errors='coerce').dt.year.astype(float)
+
+        # Preparazione dati artista
+        artist_start_years = None
+        artist_birth_years = None
+        
+        if 'active_start' in artists_df.columns:
+            artist_start_years = get_years_from_series(
+                artists_df.set_index(artist_id_column)['active_start']
+            )
+            
+        if 'birth_date' in artists_df.columns:
+            artist_birth_years = get_years_from_series(
+                artists_df.set_index(artist_id_column)['birth_date']
+            )
+
+        # Loop di validazione
+        for i in df.index:
+            track_year = years.loc[i]
+            artist_id = df.loc[i, artist_link_column]
+            
+            if pd.isna(track_year) or pd.isna(artist_id):
+                continue
+            
+            # Check Active Start
+            if artist_start_years is not None and artist_id in artist_start_years.index:
+                artist_start = artist_start_years.loc[artist_id]
+                # Tolleranza di 1 anno per differenze di release tra paesi
+                if pd.notna(artist_start) and track_year < (artist_start - 1):
+                    res.append((int(i), f"year {int(track_year)} before artist active_start {int(artist_start)}"))
+            
+            # Check Birth Date + 15
+            if artist_birth_years is not None and artist_id in artist_birth_years.index:
+                birth_year = artist_birth_years.loc[artist_id]
+                if pd.notna(birth_year):
+                    min_age_year = birth_year + 15
+                    if track_year < min_age_year:
+                        res.append((int(i), f"year {int(track_year)} implied artist age < 15 (born {int(birth_year)})"))
+    
+    res.sort()
+    return res
+
+def check_valid_lyrics(
+    df: pd.DataFrame,
+    lyrics_column: str = "lyrics",
+    title_column: str = "title",
+    min_length: int = 100,
+) -> List[Tuple[int, str]]:
+    """Check if lyrics are valid (not just title, reasonable length).
+    
+    Args:
+        df: DataFrame with lyrics and title columns.
+        lyrics_column: Name of the lyrics column.
+        title_column: Name of the title column.
+        min_length: Minimum character count for valid lyrics (default 100).
+    
+    Returns:
+        List of (index, reason) tuples for invalid lyrics.
+    """
+    res = []
+    for i in df.index:
+        lyrics = df.loc[i, lyrics_column]
+        title = df.loc[i, title_column] if title_column in df.columns else ""
+        
+        if pd.isna(lyrics) or not isinstance(lyrics, str):
+            continue  # skip missing values
+        
+        lyrics_clean = lyrics.strip().lower()
+        title_clean = str(title).strip().lower() if pd.notna(title) else ""
+        
+        # Check if lyrics are too short
+        if len(lyrics_clean) < min_length:
+            res.append((int(i), f"lyrics too short ({len(lyrics_clean)} chars, min {min_length})"))
+        # Check if lyrics are just the title (or title repeated)
+        elif title_clean and lyrics_clean.replace(title_clean, "").strip() == "":
+            res.append((int(i), "lyrics contain only title"))
+        elif title_clean and lyrics_clean == title_clean:
+            res.append((int(i), "lyrics equal to title"))
+    
+    res.sort()
+    return res
+
 
 def detect_outliers_iqr(series: pd.Series, k: float = 1.5) -> pd.Series:
     """
@@ -140,6 +290,61 @@ def detect_outliers_iqr(series: pd.Series, k: float = 1.5) -> pd.Series:
     mask = mask.fillna(False)
     mask.name = f"{series.name}_is_outlier" if series.name else "is_outlier"
     return mask
+
+
+def detect_outliers_iqr_with_score(series: pd.Series, k: float = 1.5) -> Tuple[pd.Series, pd.Series]:
+    """
+    Flags values that fall outside the IQR fence and returns an outlier score.
+    Score is defined as distance from the nearest fence divided by IQR.
+    0 means on the fence or inside. > 0 means outside.
+
+    Parameters
+    ----------
+    series: pd.Series
+        Numeric series to inspect.
+    k: float
+        IQR multiplier.
+
+    Returns
+    -------
+    Tuple[pd.Series, pd.Series]
+        (Boolean mask of outliers, Series of outlier scores)
+    """
+    if not isinstance(series, pd.Series):
+        raise TypeError("detect_outliers_iqr_with_score expects a pandas Series")
+
+    numeric = pd.to_numeric(series, errors="coerce")
+    q1 = numeric.quantile(0.25)
+    q3 = numeric.quantile(0.75)
+    iqr = q3 - q1
+
+    if pd.isna(iqr) or iqr == 0:
+        return (
+            pd.Series(False, index=series.index, name=f"{series.name}_is_outlier"),
+            pd.Series(0.0, index=series.index, name=f"{series.name}_outlier_score")
+        )
+
+    lower = q1 - k * iqr
+    upper = q3 + k * iqr
+
+    # Calculate score: distance from fence / IQR
+    # If x < lower: score = (lower - x) / IQR
+    # If x > upper: score = (x - upper) / IQR
+    # Else: score = 0
+    
+    scores = pd.Series(0.0, index=series.index, name=f"{series.name}_outlier_score")
+    
+    mask_lower = numeric < lower
+    mask_upper = numeric > upper
+    
+    scores[mask_lower] = (lower - numeric[mask_lower]) / iqr
+    scores[mask_upper] = (numeric[mask_upper] - upper) / iqr
+    
+    mask = mask_lower | mask_upper
+    mask = mask.fillna(False)
+    mask.name = f"{series.name}_is_outlier" if series.name else "is_outlier"
+    
+    return mask, scores
 
 
 def plot_categorical_distribution(
@@ -336,12 +541,11 @@ def plot_swear_words(df:pd.DataFrame, language: str ="IT", threshold: int = 20):
 
 
 def plot_boxplot(
-    df,
-    column,
+    series,
     by=None,
     title=None,
     figsize=(4, 6),
-    outlier_col=None,
+    outlier_series=None,
     ax: Axes | None = None,
 ):
     created_fig = False
@@ -350,10 +554,15 @@ def plot_boxplot(
         created_fig = True
     else:
         fig = ax.figure
+
+    # Handle case where series is a DataFrame and by is a column name
+    if isinstance(series, pd.DataFrame) and isinstance(by, str) and by in series.columns:
+        series = series[by]
+        by = None
+
     sns.boxplot(
-        data=df,
         x=by,
-        y=column,
+        y=series,
         ax=ax,
         color="lightblue",
         medianprops=dict(color="red", linewidth=2),
@@ -362,12 +571,12 @@ def plot_boxplot(
         capprops=dict(color="gray"),
     )
 
-    if outlier_col and outlier_col in df.columns:
-        mask_outliers = df[outlier_col].astype(bool)
+    if outlier_series is not None:
+        mask_outliers = outlier_series.astype(bool)
         if by is None:
             ax.scatter(
                 np.zeros(mask_outliers.sum()),
-                df.loc[mask_outliers, column],
+                series[mask_outliers],
                 color="tomato",
                 edgecolors="k",
                 alpha=0.9,
@@ -377,8 +586,22 @@ def plot_boxplot(
             # map group labels to x positions
             tick_labels = [t.get_text() for t in ax.get_xticklabels()]
             pos_map = {label: pos for pos, label in enumerate(tick_labels)}
-            for label, grp in df.groupby(by):
-                grp_out = grp[grp[outlier_col].astype(bool)]
+            
+            # Create a temporary dataframe to handle grouping
+            # Ensure series and by are aligned
+            if isinstance(series, pd.Series) and isinstance(by, pd.Series):
+                 temp_df = pd.DataFrame({'val': series, 'grp': by})
+                 # We need to align outlier_series as well
+                 if isinstance(outlier_series, pd.Series):
+                     temp_df['out'] = outlier_series
+                 else:
+                     temp_df['out'] = outlier_series
+            else:
+                 # Fallback if not series (e.g. arrays)
+                 temp_df = pd.DataFrame({'val': series, 'grp': by, 'out': mask_outliers})
+
+            for label, grp in temp_df.groupby('grp'):
+                grp_out = grp[grp['out'].astype(bool)]
                 if grp_out.empty:
                     continue
                 x_pos = pos_map.get(str(label))
@@ -386,7 +609,7 @@ def plot_boxplot(
                     continue
                 ax.scatter(
                     np.full(len(grp_out), x_pos),
-                    grp_out[column],
+                    grp_out['val'],
                     color="tomato",
                     edgecolors="k",
                     alpha=0.9,
@@ -398,9 +621,9 @@ def plot_boxplot(
             handles, labels = zip(*handles_labels)
             ax.legend(handles, labels)
 
-    ax.set_title(title if title else f"Boxplot of {column}")
-    ax.set_xlabel(by if by else "")
-    ax.set_ylabel(column)
+    ax.set_title(title if title else f"Boxplot of {series.name if hasattr(series, 'name') else ''}")
+    ax.set_xlabel(by.name if hasattr(by, 'name') and by.name else "")
+    ax.set_ylabel(series.name if hasattr(series, 'name') else "")
     fig.suptitle("")
     fig.tight_layout()
     if created_fig:
@@ -513,3 +736,145 @@ def one_hot_encode_array_feature(df, col_name):
     
 
     return df
+
+def get_yeo_johnson(series):
+    """Apply Yeo-Johnson transformation."""
+    pt = PowerTransformer(method='yeo-johnson')
+    return pd.Series(pt.fit_transform(series.values.reshape(-1, 1)).flatten(), index=series.index)
+
+
+default_transforms = {
+        'default': lambda x: x,
+        'log': lambda x: np.log1p(x if x.min() > 0 else x + abs(x.min()) + 1),
+        'sqrt': lambda x: np.sqrt(x if x.min() >= 0 else x + abs(x.min()) + 1),
+        'yeo-johnson': get_yeo_johnson
+    }
+
+    
+def analyze_feature(
+    df: pd.DataFrame,
+    feature: str,
+    transforms: Dict[str, Callable[[pd.Series], pd.Series]]=default_transforms,
+    outlier_function: Callable[[pd.Series], pd.Series]=detect_outliers_iqr,
+    figsize: Tuple[int, int]=(12, 16),
+    colors: List[str]=['skyblue', 'lightgreen', 'salmon', 'orange'],
+    shift_threshold: float = 500
+    ) -> Dict[str, Dict[str, Any]]:
+    """
+    Analyze a feature with multiple transformations and visualizations.
+    
+    If all values are > shift_threshold, the data is shifted to start from 0
+    to avoid numerical issues with transformations like Yeo-Johnson.
+    """
+
+    series = df[feature].dropna()
+    
+    # Shift data if minimum is above threshold (e.g., years like 1990-2025)
+    shift_applied = 0
+    if series.min() > shift_threshold:
+        shift_applied = series.min()
+        series = series - shift_applied
+        print(f" Data shifted by -{shift_applied} (original min > {shift_threshold})")
+    
+    results = {} 
+    
+    fig, axes = plt.subplots(len(transforms.keys()), 2, figsize=figsize)
+    fig.suptitle(f'Analisi Distribuzione & Outliers: {feature}' + 
+                 (f' (shifted by -{shift_applied})' if shift_applied else ''), 
+                 fontsize=16, y=1.02)
+    
+    for i, (name, transform) in enumerate(transforms.items()):
+        data = transform(series)
+        skew = data.skew()
+        kurt = data.kurtosis()
+        
+        outliers_mask = outlier_function(data)
+        num_outliers = outliers_mask.sum()
+        
+        results[name] = {
+            'distribution': data,
+            'outliers_mask': outliers_mask, 
+            'num_outliers': num_outliers,
+            'stats': {'skew': skew, 'kurt': kurt},
+            'shift_applied': shift_applied
+        }
+        
+        color = colors[i]
+        
+        sns.histplot(data, kde=True, ax=axes[i, 0], color=color)
+        axes[i, 0].set_title(f'{name} | Skew: {skew:.2f} | Kurt: {kurt:.2f}')
+        axes[i, 0].set_xlabel('')
+        
+        sns.boxplot(x=data, ax=axes[i, 1], color=color, orient='h', 
+                    flierprops={"marker": "o", "markerfacecolor": "red", "markersize": 6})
+        axes[i, 1].set_title(f'{name} | Outliers found: {num_outliers}')
+        axes[i, 1].set_xlabel('')
+
+    plt.tight_layout()
+    plt.show()
+    
+    return results
+
+
+
+def apply_transforms(
+    df: pd.DataFrame,
+    feature_transforms: Dict[str, Callable[[pd.Series], pd.Series]],
+    inplace: bool = False,
+) -> pd.DataFrame:
+    """Apply transformations to multiple features in a DataFrame.
+    
+    Args:
+        df: Input DataFrame.
+        feature_transforms: Dictionary mapping column names to transform functions.
+                           Each function takes a Series and returns a transformed Series.
+        inplace: If True, modify df in place. Otherwise return a copy.
+    
+    Returns:
+        DataFrame with transformed features.
+    
+    Example:
+        >>> transforms = {
+        ...     'duration_ms': lambda s: np.log1p(s),
+        ...     'popularity': lambda s: np.sqrt(s),
+        ... }
+        >>> df_transformed = apply_transforms(df, transforms)
+    """
+    result = df if inplace else df.copy()
+    
+    for feature, transform in feature_transforms.items():
+        if feature not in result.columns:
+            print(f"Warning: Column '{feature}' not found in DataFrame, skipping.")
+            continue
+        try:
+            result[feature] = transform(result[feature])
+        except Exception as e:
+            print(f"Error transforming '{feature}': {e}")
+    
+    return result
+
+def apply_winsorization(analysis_res: dict, transform_name: str) -> pd.Series:
+    """
+    Applica winsorization usando i limiti già calcolati in analyze_feature.
+    Schiaccia gli outliers sui valori min/max degli inliers.
+    """
+    # 1. Estrai i dati calcolati
+    data_info = analysis_res[transform_name]
+    series = data_info['distribution']
+    is_outlier = data_info['outliers_mask']
+    
+    # 2. Trova i limiti sicuri (min e max dei dati NON outlier)
+    # ~is_outlier seleziona solo le righe False (inliers)
+    inliers = series[~is_outlier]
+    
+    if inliers.empty:
+        return series # Sicurezza se tutto è outlier
+        
+    lower_limit = inliers.min()
+    upper_limit = inliers.max()
+    
+    # 3. Winsorization (Clip)
+    # Tutti i valori sotto lower_limit diventano lower_limit
+    # Tutti i valori sopra upper_limit diventano upper_limit
+    print(f"Winsorizing '{transform_name}': clipped to range [{lower_limit:.4f}, {upper_limit:.4f}]")
+    return series.clip(lower=lower_limit, upper=upper_limit)
