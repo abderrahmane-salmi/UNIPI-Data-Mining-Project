@@ -255,18 +255,18 @@ class TracksImputer:
             raise TypeError("df must be a pandas DataFrame")
         work_df = df if inplace or not self.copy else df.copy()
 
-        self._spotify = spotipy.Spotify(auth_manager=SpotifyClientCredentials(
-            client_id=client_id or os.getenv('SPOTIFY_CLIENT_ID'),
-            client_secret=client_secret or os.getenv('SPOTIFY_CLIENT_SECRET')
-        ))
-        self._spotify_target_columns = target_columns or list(SPOTIFY_EXTRACTORS.keys())
-
         cache_path: Path | None = None
         if cache_dir is not None:
             cache_dir = Path(cache_dir)
             cache_path = cache_dir / self.SPOTIFY_IMPUTED_FILENAME
             if cache_path.exists():
                 return self._finalize_result(df, pd.read_csv(cache_path), inplace)
+
+        self._spotify = spotipy.Spotify(auth_manager=SpotifyClientCredentials(
+            client_id=client_id or os.getenv('SPOTIFY_CLIENT_ID'),
+            client_secret=client_secret or os.getenv('SPOTIFY_CLIENT_SECRET')
+        ))
+        self._spotify_target_columns = target_columns or list(SPOTIFY_EXTRACTORS.keys())
 
         imputed_df = work_df.apply(self._impute_row_spotify, axis=1)
 
