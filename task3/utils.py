@@ -7,6 +7,7 @@ city_class_map = {
     'lambrate':'Lombardia',
     'calvairate':'Lombardia',
     'rozzi':'Lombardia',
+    'rozzano':'Lombardia',
     'cinisello':'Lombardia',
     'bologna' : 'Center',
     'bolo': 'Center',
@@ -54,9 +55,24 @@ dialect_class_map ={
     'criatur':'Campania',
     'criatura':'Campania',
     'chiagne':'Campania',
+    'chiagnere':'Campania',
     'guagliona':'Campania', 
     'sang':'Campania',
-    'cchiù':'Campania',  
+    'nient':'Campania',
+    'miezz':'Campania',
+    'amm\'':'Campania',
+    'nuje':'Campania',
+    'simmo':'Campania',
+    'cchiù':'Campania', 
+    'pecché':'Campania',
+    'toja':'Campania',
+    'agg':'Campania',
+    'aggio':'Campania',
+    'aggia':'Campania',
+    'ditto':'Campania', 
+    'chella':'Campania',
+    'faje':'Campania',
+    'ammore':'Campania'
 }
 
 
