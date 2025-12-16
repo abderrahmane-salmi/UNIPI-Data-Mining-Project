@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import List
 from transformers import Wav2Vec2FeatureExtractor, AutoModel, Wav2Vec2Model
 from tslearn.preprocessing import TimeSeriesResampler
+import gc
 
 class FeatureExtractor:
     def __init__(
@@ -52,32 +53,25 @@ class FeatureExtractor:
             
             if cache_dir:
                 os.makedirs(cache_dir, exist_ok=True)
+                #print(f"len: {len(os.listdir(cache_dir))}")
                 cache_path = os.path.join(cache_dir, cache_name)
                 
-                # --- MODIFICA RICHIESTA: Se esiste, carica -> resample -> salva di nuovo ---
                 if os.path.exists(cache_path):
                     try:
-                        # 1. Carica quello che c'è (gestisce sia npz che npy vecchi)
                         loaded = np.load(cache_path)
-                        # Se è un archivio .npz prendi 'features', altrimenti è l'array diretto
                         raw_from_cache = loaded['features'] if isinstance(loaded, np.lib.npyio.NpzFile) else loaded
 
-                        # 2. Resampling Forzato (anche se era già fatto, lo rifà per sicurezza)
                         resampler = TimeSeriesResampler(sz=target_resample_len)
-                        # Aggiunge dimensione batch (1, Time, Feat) per tslearn
                         resampled_3d = resampler.fit_transform(raw_from_cache[np.newaxis, :, :])
                         final_features = resampled_3d[0]
 
-                        # 3. Salva di nuovo (Sovrascrive col formato corretto compresso)
                         np.savez_compressed(cache_path, features=final_features.astype(np.float16))
-                        print(f"Refreshed & Resaved from cache: {filename} ({safe_id})")
 
                         return final_features.astype(np.float32)
                     except Exception as e:
                         print(f"Errore rigenerazione cache per {filename}, ricalcolo da zero: {e}")
                         # Se fallisce, prosegue sotto e lo rifà dall'audio
 
-            # --- FLUSSO STANDARD (Se non c'era cache o è fallita) ---
             y, _ = librosa.load(file_path, sr=self.sampling_rates[idx])
             
             if required_audio_len:
@@ -93,14 +87,43 @@ class FeatureExtractor:
             
             raw = outputs.last_hidden_state.squeeze(0).numpy()
 
-            # Resampling immediato
             resampler = TimeSeriesResampler(sz=target_resample_len)
             resampled_3d = resampler.fit_transform(raw[np.newaxis, :, :])
             final_features = resampled_3d[0]
 
             if cache_dir:
-                # Salva compresso
                 np.savez_compressed(cache_path, features=final_features.astype(np.float16))
-                print(f"Saved new: {filename} ({safe_id})")
+                #print(f"Saved new: {filename} ({safe_id})")
 
             return final_features.astype(np.float32)
+
+if __name__ == "__main__":
+    MP3_FOLDER = "/Users/lorenzoallegrini/Downloads/fedez_fibra"
+    feature_extractor = FeatureExtractor()
+    file_paths = [f for f in Path(MP3_FOLDER).glob("**/*.mp3")]
+    
+    print(f"Trovati {len(file_paths)} file.")
+
+    for filename in file_paths:
+        try:
+            features = feature_extractor.extract_features(
+                file_path=filename,
+                cache_dir="./extracted_features"  
+            )
+            print(f"{filename.name}: {features.shape}")
+
+            # --- PULIZIA MEMORIA ---
+            
+            # 2. Cancella il riferimento alla variabile pesante
+            del features 
+            
+            # (Opzionale) Se dentro 'feature_extractor' si caricano audio grezzi
+            # assicurati che non restino appesi lì.
+            
+            # 3. Forza il Garbage Collector a liberare subito la RAM
+            gc.collect()
+            
+        except Exception as e:
+            print(f"Errore processando {filename.name}: {e}")
+            # Anche in caso di errore, puliamo per non bloccare il ciclo successivo
+            gc.collect()

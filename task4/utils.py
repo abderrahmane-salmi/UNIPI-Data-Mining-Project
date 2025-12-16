@@ -3,50 +3,67 @@ import numpy as np
 import pandas as pd
 import seaborn as sns
 
-def plot_timeseries_clusters(X, labels, centroids=None, feature_idx=0, title="Cluster Analysis", figsize=(12, 10)):
+def plot_timeseries_clusters(X, labels, centroids=None, feature_idx=0, title="Cluster Analysis", figsize=(12, 12)):
     """
-    Plots time series grouped by clusters. Handles dynamic cluster counts and DBSCAN noise.
+    Plots time series grouped by clusters + a final comparison plot of all centroids.
     """
     unique_labels = sorted(np.unique(labels))
     n_clusters = len(unique_labels)
     cmap = plt.get_cmap('tab10')
     
-    # Setup grid
-    fig, axes = plt.subplots(nrows=n_clusters, ncols=1, figsize=figsize, sharex=True, constrained_layout=True)
-    if n_clusters == 1: axes = [axes]
-    axes = np.array(axes).flatten()
+    fig, axes = plt.subplots(nrows=n_clusters + 1, ncols=1, figsize=figsize, sharex=True, constrained_layout=True)
+    if not isinstance(axes, np.ndarray): axes = [axes]
+    axes = np.ravel(axes) # Assicura che sia sempre 1D array
+
+    ax_summary = axes[-1]
+    ax_summary.set_title("Centroids Comparison")
+    ax_summary.grid(True, alpha=0.3)
 
     for i, label in enumerate(unique_labels):
         ax = axes[i]
-        
-        # Select data for current cluster
         mask = labels == label
         cluster_data = X[mask, :, feature_idx]
-        
-        # Handle colors and naming (DBSCAN noise = -1)
+
         is_noise = (label == -1)
         color = 'gray' if is_noise else cmap(i % 10)
         cluster_name = "Noise (-1)" if is_noise else f"Cluster {label}"
 
-        # 1. Plot individual time series
-        ax.plot(cluster_data.T, color=color, alpha=0.15, linewidth=0.5)
+        if len(cluster_data) > 0:
+            ax.plot(cluster_data.T, color=color, alpha=0.15, linewidth=0.5)
 
-        # 2. Plot Centroid or Mean
+        representative_line = None
+        
         if centroids is not None and not is_noise:
-            center = centroids[label, :, feature_idx]
-            ax.plot(center, color='black', linewidth=2, linestyle='--', label='Centroid')
+            representative_line = centroids[label, :, feature_idx]
+            ax.plot(representative_line, color='black', linewidth=2, linestyle='--', label='Centroid')
+            
         elif len(cluster_data) > 0:
-            mean_trend = np.mean(cluster_data, axis=0)
+            representative_line = np.mean(cluster_data, axis=0)
             style = ':' if is_noise else '--'
-            ax.plot(mean_trend, color='black', linewidth=2, linestyle=style, label='Mean')
+            col_line = 'black' if not is_noise else 'red' # Rumore medio in rosso per distinguerlo
+            ax.plot(representative_line, color=col_line, linewidth=2, linestyle=style, label='Mean')
 
-        # Formatting
         ax.set_title(f"{cluster_name} (n={len(cluster_data)})")
-        ax.set_ylabel(f"Amplitude (Feat {feature_idx})")
+        ax.set_ylabel(f"Amp (Feat {feature_idx})")
         ax.legend(loc='upper right')
         ax.grid(True, alpha=0.3)
 
-    axes[-1].set_xlabel("Time Steps")
+        if representative_line is not None:
+            lbl_sum = f"Cluster {label}" if not is_noise else "Noise Avg"
+            style_sum = '-' if not is_noise else ':'
+            width_sum = 2 if not is_noise else 1
+            
+            ax_summary.plot(representative_line, 
+                            color=color, 
+                            linewidth=width_sum, 
+                            linestyle=style_sum, 
+                            label=lbl_sum)
+
+    # Formatting Summary Plot
+    ax_summary.set_xlabel("Time Steps")
+    ax_summary.set_ylabel(f"Amplitude (Feat {feature_idx})")
+    ax_summary.legend(loc='upper right')
+
     plt.suptitle(title, fontsize=16)
     plt.show()
 
