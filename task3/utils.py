@@ -9,8 +9,8 @@ city_class_map = {
     'rozzi':'Lombardia',
     'rozzano':'Lombardia',
     'cinisello':'Lombardia',
-    'bologna' : 'Center',
-    'bolo': 'Center',
+    'bologna' : 'Lazio',
+    'bolo': 'Lazio',
     'napoli':'Campania',
     'napule':'Campania',
     'secondigliano':'Campania',
@@ -77,7 +77,7 @@ dialect_class_map ={
 
 
 def detect_region_references(tokens, threshold=0):
-    classes = ['Lombardia','Lazio','Campania','North','Center']
+    classes = ['Lombardia','Lazio','Campania','North']
     points = {class_:0 for class_ in classes}
 
     dialect_keys = dialect_class_map.keys()
