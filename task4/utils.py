@@ -2118,105 +2118,164 @@ def find_and_plot_cluster_motifs(timeseries_list, m, cluster_id, k=None, max_mat
     
     print(f"[{title_prefix} Cluster {cluster_id}] Computing Matrix Profile (Length={len(T)})...")
     mp = stumpy.stump(T, m, ignore_trivial=True)
-    mp = mp.astype(float) # Ensure float type for NaN checks
+    mp = mp.astype(float)
     
-    # 1. Find the Best Motif (Global Min)
-    # mp[:, 0] contains matrix profile values (distances)
-    # We ignore NaNs in the profile
-    valid_indices = np.where(~np.isnan(mp[:, 0]))[0]
-    if len(valid_indices) == 0:
-        print("No valid motifs found.")
-        return
+    # --- FILTER: IGNORE LOW VARIANCE (SILENCE) ---
+    try:
+        from stumpy import core
+        std_dev = core.rolling_std(T, m)
+    except:
+        std_dev = np.array([np.std(T[i:i+m]) for i in range(len(T) - m + 1)])
         
-    motif_idx = valid_indices[np.argmin(mp[valid_indices, 0])]
-    motif_dist = mp[motif_idx, 0]
-    
-    print(f"Found Best Motif at index {motif_idx} with distance {motif_dist:.4f}")
-    
-    # 2. Radius/Similarity Search to find repetitions
-    Q = T[motif_idx : motif_idx + m]
-    
-    # Compute Distance Profile of Q against T
-    D = stumpy.mass(Q, T)
-    
-    # Find matches (peaks in similarity / valleys in distance)
-    # Threshold: if not provided, estimate it. 
-    if distance_threshold is None:
-        distance_threshold = max(motif_dist * 3, 2.0) # Heuristic default
+    non_zero_std = std_dev[std_dev > 1e-6]
+    if len(non_zero_std) > 0:
+        std_threshold = np.percentile(non_zero_std, 5) # Ignore bottom 5% (only dead silence)
+    else:
+        std_threshold = 0.0
         
-    # Get matches indices (valleys)
-    from scipy.signal import argrelextrema
-    valleys = argrelextrema(D, np.less)[0]
+    print(f"Applying Silence Filter (Std Threshold: {std_threshold:.4f})...")
     
-    # Filter by threshold
-    # Also ignore regions corresponding to spacers (which yield high dist usually, but check for NaNs)
-    matches = [v for v in valleys if D[v] < distance_threshold and not np.isnan(D[v])]
+    if len(std_dev) == len(mp):
+        silence_mask = std_dev < std_threshold
+        mp[silence_mask, 0] = np.inf
+    # ---------------------------------------------
     
-    # Include the motif itself if not found (sometimes argrelextrema misses exact zero if flat)
-    if not any(abs(motif_idx - m_idx) < (m/2) for m_idx in matches):
-         matches.append(motif_idx)
-
-    # Sort by distance
-    matches = sorted(matches, key=lambda x: D[x])
+    # ITERATIVE MOTIF SEARCH (Find Top-K distinct motifs that span multiple songs)
+    num_seeds_to_find = 3
+    found_motifs = []
     
-    # Filter overlapping matches
-    unique_matches = []
-    exclusion_zone = int(m / 2)
+    mp_current = mp[:, 0].copy()
+    exclusion_zone = int(m * 2)
     
-    for match in matches:
-        if not any(abs(match - um) < exclusion_zone for um in unique_matches):
-            unique_matches.append(match)
+    # We loop more times because we might discard local-only motifs
+    max_search_attempts = 20 
+    
+    print(f"Searching for Cross-Song Motifs (attempting up to {max_search_attempts} candidates)...")
+    
+    for attempt in range(max_search_attempts):
+        if len(found_motifs) >= num_seeds_to_find:
+            break
             
-    # Limit matches
-    top_matches = unique_matches[:max_matches]
-    
-    print(f"Found {len(unique_matches)} matches within threshold {distance_threshold:.2f}. Showing top {len(top_matches)}.")
-    
-    # 3. Visualization
-    fig, axes = plt.subplots(len(top_matches) + 1, 1, figsize=(10, 2.5 * (len(top_matches) + 1)), sharex=False)
-    if len(top_matches) == 0: axes = [axes] 
-    if not isinstance(axes, np.ndarray): axes = [axes] # Ensure iterable
+        valid_indices = np.where(~np.isnan(mp_current) & ~np.isinf(mp_current))[0]
+        if len(valid_indices) == 0:
+            break
+            
+        idx_min = valid_indices[np.argmin(mp_current[valid_indices])]
+        dist_min = mp_current[idx_min]
+        
+        # --- VALIDATE CANDIDATE: Check if it appears in >1 distinct songs ---
+        Q_cand = T[idx_min : idx_min + m]
+        D_cand = stumpy.mass(Q_cand, T)
+        
+        # Heuristic: Allow matches with Correlation > 0.60 
+        # Dist = sqrt(2 * m * (1 - 0.60)) = sqrt(0.8 * m)
+        match_radius = np.sqrt(0.8 * m)
+        # But ensure it's at least looser than strict 2.0
+        curr_thresh = max(match_radius, 4.0)
+        
+        from scipy.signal import argrelextrema
+        valleys = argrelextrema(D_cand, np.less)[0]
+        matches = [v for v in valleys if D_cand[v] < curr_thresh and not np.isnan(D_cand[v])]
+        # Include self
+        matches.append(idx_min)
+        
+        # Map matches to Song IDs
+        found_song_ids = set()
+        for mt in matches:
+            for start, end, orig_idx in indices_map:
+                if start <= mt < end:
+                    found_song_ids.add(orig_idx)
+                    break
+        
+        if len(found_song_ids) > 1:
+            found_motifs.append((idx_min, dist_min))
+            # print(f"  [KEEP] Candidate #{attempt+1} (Idx {idx_min}) found in {len(found_song_ids)} unique songs.")
+        else:
+            # print(f"  [DROP] Candidate #{attempt+1} (Idx {idx_min}) is local only (1 song).")
+            pass
+            
+        # Mask this area regardless so we find something new next time
+        start_ex = max(0, idx_min - exclusion_zone)
+        end_ex = min(len(mp_current), idx_min + exclusion_zone)
+        mp_current[start_ex : end_ex] = np.inf
+        # --------------------------------------------------------------------
+        
+    print(f"Found {len(found_motifs)} valid Cross-Song seed motifs.")
 
-    # Plot Query Motif
-    axes[0].plot(Q, color='red', linewidth=2, label="Seed Pattern")
-    axes[0].set_title(f"Cluster {cluster_id} - Seed Pattern (Index {motif_idx})")
-    axes[0].legend(loc="upper right")
-    axes[0].grid(True, alpha=0.3)
-    
-    # Plot Matches
-    for i, match_idx in enumerate(top_matches):
-        ax = axes[i+1]
+    for seed_rank, (motif_idx, motif_dist) in enumerate(found_motifs):
+        print(f"  > Seed #{seed_rank+1} at index {motif_idx} (Dist: {motif_dist:.4f})")
         
-        # Identify which sample this comes from
-        sample_id = -1
-        sample_local_idx = -1
-        for start, end, orig_idx in indices_map:
-            if start <= match_idx < end:
-                sample_id = orig_idx
-                sample_local_idx = match_idx - start
-                break
+        # 2. Radius/Similarity Search for THIS seed (Re-run for plotting)
+        Q = T[motif_idx : motif_idx + m]
+        D = stumpy.mass(Q, T)
         
-        subseq = T[match_idx : match_idx + m]
-        dist = D[match_idx]
+        # Threshold heuristic
+        if distance_threshold is None:
+            # Heuristic: Allow matches with Correlation > 0.60
+            match_radius = np.sqrt(0.8 * m)
+            curr_threshold = max(match_radius, 4.0)
+        else:
+            curr_threshold = distance_threshold
+            
+        from scipy.signal import argrelextrema
+        valleys = argrelextrema(D, np.less)[0]
         
-        ax.plot(subseq, color='blue', alpha=0.7, label=f"Match #{i+1} (D={dist:.2f})")
-        ax.set_title(f"Match #{i+1} in Sample {sample_id} @ {sample_local_idx}")
-        ax.legend(loc="upper right")
-        ax.grid(True, alpha=0.3)
+        matches = [v for v in valleys if D[v] < curr_threshold and not np.isnan(D[v])]
         
-    plt.tight_layout()
-    plt.show()
+        # Always include self
+        if not any(abs(motif_idx - m_idx) < (m/2) for m_idx in matches):
+             matches.append(motif_idx)
+
+        matches = sorted(matches, key=lambda x: D[x])
+        
+        # Filter overlapping matches
+        unique_matches = []
+        match_ex_zone = int(m / 2)
+        for match in matches:
+            if not any(abs(match - um) < match_ex_zone for um in unique_matches):
+                unique_matches.append(match)
+                
+        # Limit matches but prioritize putting DIVERSE songs first in plot
+        # Re-sort top_matches to show distinct songs if possible? 
+        # For now just take top matches by distance.
+        top_matches = unique_matches[:max_matches]
+        
+        # Plot
+        fig, axes = plt.subplots(len(top_matches) + 1, 1, figsize=(10, 2.0 * (len(top_matches) + 1)), sharex=False)
+        if len(top_matches) == 0: axes = [axes] 
+        if not isinstance(axes, np.ndarray): axes = [axes]
+
+        # Plot Seed
+        axes[0].plot(Q, color='red', linewidth=2, label=f"Seed #{seed_rank+1}")
+        axes[0].set_title(f"Cluster {cluster_id} - Distinct Pattern #{seed_rank+1} (Dist: {motif_dist:.2f})")
+        axes[0].legend(loc="upper right")
+        axes[0].grid(True, alpha=0.3)
+        
+        # Plot Matches
+        for i, match_idx in enumerate(top_matches):
+            ax = axes[i+1]
+            sample_id = -1
+            sample_pos = -1
+            for start, end, orig_idx in indices_map:
+                if start <= match_idx < end:
+                    sample_id = orig_idx
+                    sample_pos = match_idx - start
+                    break
+            
+            subseq = T[match_idx : match_idx + m]
+            dist_val = D[match_idx]
+            ax.plot(subseq, color='blue', alpha=0.7, label=f"Match #{i+1} (D={dist_val:.2f})")
+            ax.set_title(f"Instance in Sample {sample_id} @ {sample_pos}")
+            ax.legend(loc="upper right")
+            ax.grid(True, alpha=0.3)
+            
+        plt.tight_layout()
+        plt.show()
 
 def find_and_plot_cluster_discords(timeseries_list, m, cluster_id, k=None, max_discords=3, title_prefix=""):
     """
     Finds and plots the top discords (anomalies) in a cluster using Matrix Profile.
-    
-    Args:
-        timeseries_list: List of 1D arrays belonging to the cluster.
-        m: Window size.
-        cluster_id: ID of the cluster.
-        k: Max samples to use.
-        max_discords: Max number of anomalies to plot.
+    Structure mirrors 'find_and_plot_cluster_motifs' but searches for Maxima (Discords).
     """
     if not timeseries_list: 
         return
@@ -2224,60 +2283,245 @@ def find_and_plot_cluster_discords(timeseries_list, m, cluster_id, k=None, max_d
     try:
         import stumpy
     except ImportError:
-        print("Error: 'stumpy' is required for motif/discord analysis.")
+        print("Error: 'stumpy' is required.")
         return
 
     print(f"[{title_prefix} Cluster {cluster_id}] Analyzing Discords (k={k if k else 'All'})...")
     T, indices_map = prepare_cluster_timeseries(timeseries_list, m, k)
     
+    print(f"[{title_prefix} Cluster {cluster_id}] Computing Matrix Profile (Length={len(T)})...")
     mp = stumpy.stump(T, m, ignore_trivial=True)
+    mp = mp.astype(float)
     
-    # In MP, Discords are the MAXIMA
-    # We sort indices by distance descending
-    # Ignore NaNs
-    valid_mask = ~np.isnan(mp[:, 0])
-    valid_indices = np.where(valid_mask)[0]
-    
-    if len(valid_indices) == 0:
-        print("No valid sequences found.")
-        return
+    # --- FILTER: IGNORE LOW VARIANCE (SILENCE) ---
+    try:
+        from stumpy import core
+        std_dev = core.rolling_std(T, m)
+    except:
+        std_dev = np.array([np.std(T[i:i+m]) for i in range(len(T) - m + 1)])
+        
+    non_zero_std = std_dev[std_dev > 1e-6]
+    if len(non_zero_std) > 0:
+        std_threshold = np.percentile(non_zero_std, 5) 
+    else:
+        std_threshold = 0.0
+        
+    print(f"Applying Silence Filter (Std Threshold: {std_threshold:.4f})...")
+            
+    if len(std_dev) == len(mp):
+        silence_mask = std_dev < std_threshold
+        # For Discords: We want MAX distance. 
+        # Silence shouldn't be a discord (it's common). Set dist to 0.
+        mp[silence_mask, 0] = 0.0 
+    # ---------------------------------------------
 
-    sorted_indices = valid_indices[np.argsort(mp[valid_indices, 0])[::-1]]
+    # SEARCH FOR TOP DISCORDS (MAXIMA)
+    found_discords = []
     
-    # Filter overlapping discords
-    unique_discords = []
-    exclusion_zone = m
+    mp_current = mp[:, 0].copy()
+    exclusion_zone = int(m * 2)
     
-    for idx in sorted_indices:
-        if not any(abs(idx - u) < exclusion_zone for u in unique_discords):
-            unique_discords.append(idx)
-            if len(unique_discords) >= max_discords:
-                break
-                
-    # Plot
-    fig, axes = plt.subplots(len(unique_discords), 1, figsize=(10, 3 * len(unique_discords)), sharex=False)
-    if len(unique_discords) == 0: return
-    if not isinstance(axes, np.ndarray): axes = [axes]
+    print(f"Searching for Top Discords (Max Distance)...")
     
-    for i, discord_idx in enumerate(unique_discords):
-        ax = axes[i]
+    for attempt in range(max_discords * 2):
+        if len(found_discords) >= max_discords:
+            break
+            
+        valid_indices = np.where(~np.isnan(mp_current) & ~np.isinf(mp_current))[0]
+        if len(valid_indices) == 0:
+            break
+            
+        # DIFFERENCE: ARGMAX (Find most anomalous)
+        idx_max = valid_indices[np.argmax(mp_current[valid_indices])]
+        dist_max = mp_current[idx_max]
         
-        # Identity sample
-        sample_id = -1
-        sample_local = -1
-        for start, end, orig in indices_map:
-            if start <= discord_idx < end:
-                sample_id = orig
-                sample_local = discord_idx - start
-                break
-                
-        subseq = T[discord_idx : discord_idx + m]
-        dist = mp[discord_idx, 0]
+        found_discords.append((idx_max, dist_max))
         
-        ax.plot(subseq, color='orange', label=f"Discord #{i+1} (Dist={dist:.2f})")
-        ax.set_title(f"Anomaly #{i+1} in Sample {sample_id} @ {sample_local}")
+        # Mask this area so we find the NEXT biggest discord
+        start_ex = max(0, idx_max - exclusion_zone)
+        end_ex = min(len(mp_current), idx_max + exclusion_zone)
+        mp_current[start_ex : end_ex] = -np.inf # Set to -inf to ignore in next argmax
+        
+    print(f"Found {len(found_discords)} valid Discords.")
+    
+    # PLOT
+    for rank, (idx, dist) in enumerate(found_discords):
+        # Identify the Discord Sequence
+        Q = T[idx : idx + m]
+        
+        # Find its Nearest Neighbor (to show WHY it's a discord - the NN is far away)
+        D = stumpy.mass(Q, T)
+        
+        # Mask self-match
+        ex_zone = int(m/2)
+        start_self = max(0, idx - ex_zone)
+        end_self = min(len(D), idx + ex_zone)
+        D[start_self : end_self] = np.inf
+        
+        # Nearest Neighbor is the MIN distance remaining
+        nn_idx = np.argmin(D)
+        nn_dist = D[nn_idx]
+        
+        fig, axes = plt.subplots(2, 1, figsize=(10, 5), sharex=False)
+        
+        # Plot Discord
+        ax = axes[0]
+        ax.plot(Q, color='orange', linewidth=2, label=f"Discord #{rank+1}")
+        ax.set_title(f"Cluster {cluster_id} - Discord #{rank+1} (Dist: {dist:.2f})")
         ax.legend(loc="upper right")
         ax.grid(True, alpha=0.3)
         
+        # Get Sample Info for Discord
+        d_sample = "?"
+        d_pos = "?"
+        for start, end, orig in indices_map:
+            if start <= idx < end:
+                d_sample = orig
+                d_pos = idx - start
+                break
+        ax.set_xlabel(f"Source: Sample {d_sample} @ {d_pos}")
+
+        # Plot Nearest Neighbor
+        ax = axes[1]
+        subseq_nn = T[nn_idx : nn_idx + m]
+        ax.plot(subseq_nn, color='blue', alpha=0.7, label=f"Nearest Neighbor (D={nn_dist:.2f})")
+        
+        # Get Sample Info for NN
+        nn_sample = "?"
+        nn_pos = "?"
+        for start, end, orig in indices_map:
+            if start <= nn_idx < end:
+                nn_sample = orig
+                nn_pos = nn_idx - start
+                break
+                
+        ax.set_title(f"Nearest Neighbor (Closest Match found)")
+        ax.set_xlabel(f"Source: Sample {nn_sample} @ {nn_pos}")
+        ax.legend(loc="upper right")
+        ax.grid(True, alpha=0.3)
+        
+        plt.tight_layout()
+        plt.show()
+def plot_timeseries_clusters(X, labels, feature_idx=0, title="Cluster Analysis", figsize=(12, 10)):
+    """
+    Plots time series grouped by clusters + a final comparison plot of all centroids.
+    Restored and simplified version.
+    
+    Args:
+        X: The dataset (N_samples, Time, Features).
+        labels: Cluster labels.
+        feature_idx: Which feature channel to plot (default 0).
+    """
+    unique_labels = sorted(np.unique(labels))
+    n_clusters = len(unique_labels)
+    # Filter noise -1 if you want, or keep it. usually -1 is at start.
+    
+    cmap = plt.get_cmap('tab10')
+    
+    # Create subplots: one for each cluster + 1 for summary
+    fig, axes = plt.subplots(nrows=n_clusters + 1, ncols=1, figsize=figsize, sharex=True, constrained_layout=True)
+    if not isinstance(axes, np.ndarray): axes = [axes]
+    axes = np.ravel(axes)
+
+    ax_summary = axes[-1]
+    ax_summary.set_title("Centroids Comparison")
+    ax_summary.grid(True, alpha=0.3)
+
+    for i, label in enumerate(unique_labels):
+        ax = axes[i]
+        mask = labels == label
+        
+        # Extract the specific feature for this cluster
+        # Shape becomes (N_cluster_samples, Time)
+        cluster_data = X[mask, :, feature_idx]
+
+        is_noise = (label == -1)
+        color = 'gray' if is_noise else cmap(i % 10)
+        cluster_name = "Noise (-1)" if is_noise else f"Cluster {label}"
+
+        # 1. Plot all individual lines faintly
+        if len(cluster_data) > 0:
+            ax.plot(cluster_data.T, color=color, alpha=0.1, linewidth=0.5)
+
+        # 2. Calculate and plot the Mean (Centroid)
+        representative_line = None
+        if len(cluster_data) > 0:
+            representative_line = np.mean(cluster_data, axis=0)
+            style = ':' if is_noise else '--'
+            col_line = 'black' if not is_noise else 'red' # Black mean on colored lines
+            
+            ax.plot(representative_line, color='black', linewidth=2, linestyle=style, label='Mean')
+
+        ax.set_title(f"{cluster_name} (n={len(cluster_data)})")
+        ax.legend(loc='upper right')
+        ax.grid(True, alpha=0.3)
+
+        # 3. Add to Summary Plot
+        if representative_line is not None:
+            lbl_sum = f"Cluster {label}" if not is_noise else "Noise Avg"
+            style_sum = '-' if not is_noise else ':'
+            width_sum = 2 if not is_noise else 1
+            
+            ax_summary.plot(representative_line, 
+                            color=color, 
+                            linewidth=width_sum, 
+                            linestyle=style_sum, 
+                            label=lbl_sum)
+
+    ax_summary.set_xlabel("Time Steps")
+    ax_summary.set_ylabel(f"Amplitude (Feature {feature_idx})")
+    ax_summary.legend(loc='upper right')
+    plt.suptitle(title, fontsize=16)
+    plt.show()
+
+def plot_cluster_centroids_rms(envelopes, clusters, target_len=500, title="Cluster Centroids (RMS)"):
+    """
+    Plots the mean RMS envelope (centroid) for each cluster.
+    Resamples variable-length envelopes to `target_len` for aggregation.
+    """
+    import torch
+    import torch.nn.functional as F
+    
+    unique_clusters = sorted(np.unique(clusters))
+    valid_clusters = [c for c in unique_clusters if c != -1]
+    
+    # 1. Resample all envelopes to target_len for alignment
+    resampled_envelopes = []
+    
+    for env in envelopes:
+        # Env could be list or array
+        # Ensure it's 1D float tensor
+        t_env = torch.tensor(env, dtype=torch.float32).view(1, 1, -1) 
+        t_pooled = F.adaptive_avg_pool1d(t_env, target_len)
+        resampled_envelopes.append(t_pooled.squeeze().numpy())
+        
+    X_aligned = np.array(resampled_envelopes) # (N, target_len)
+    
+    # 2. Compute Centroids and Plot
+    # Use explicit clear figure to avoid overlay
+    fig, ax = plt.subplots(figsize=(12, 6))
+    colors = plt.cm.tab10.colors
+    
+    for i, cluster_id in enumerate(valid_clusters):
+        mask = (clusters == cluster_id)
+        cluster_data = X_aligned[mask]
+        
+        if len(cluster_data) == 0: continue
+            
+        mean_profile = np.mean(cluster_data, axis=0)
+        std_profile = np.std(cluster_data, axis=0)
+        
+        # Normalized time axis (0.0 to 1.0)
+        time_axis = np.linspace(0, 1, target_len) 
+        
+        color = colors[i % 10]
+        ax.plot(time_axis, mean_profile, color=color, linewidth=2.5, label=f"Cluster {cluster_id}")
+        ax.fill_between(time_axis, mean_profile - std_profile, mean_profile + std_profile, color=color, alpha=0.15)
+        
+    ax.set_title(title, fontsize=15, fontweight='bold')
+    ax.set_xlabel("Normalized Time (0-100%)")
+    ax.set_ylabel("RMS Amplitude (Mean ± Std)")
+    ax.legend(loc='upper right')
+    ax.grid(True, alpha=0.3)
     plt.tight_layout()
     plt.show()
