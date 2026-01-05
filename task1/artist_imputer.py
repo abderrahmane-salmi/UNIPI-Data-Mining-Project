@@ -11,11 +11,17 @@ Wikidata extractor for artists (e.g., Sfera Ebbasta).
 import requests
 from typing import Any, Dict, List, Optional
 import re
-from collections import Counter
 from pathlib import Path
 import json
 from mappings import *
 import pandas as pd
+
+# LLM extractor for missing values
+try:
+    from llm_extractor import LLMExtractor, ArtistInfoSchema
+    LLM_AVAILABLE = True
+except ImportError:
+    LLM_AVAILABLE = False
 
 WIKIPEDIA_API = "https://it.wikipedia.org/w/api.php"
 WIKIDATA_ENTITY = "https://www.wikidata.org/wiki/Special:EntityData/{id}.json"
@@ -49,9 +55,9 @@ class ArtistImputer:
         copy: bool = True,
         timeout: int = 30,
         log_path: Optional[str] = "log2",
-        region_wikipedia_threshold = 1,
         cache_dir: Optional[str | Path] = None,
         cache_enabled: bool = True,
+        use_llm: bool = True,
     ) -> None:
         self.artist_props = dict(artist_props or ARITIST_PROPS)
         self.location_hint_props = tuple((location_hint_props or REGIONAL_HINT_PROPS).values())
@@ -63,7 +69,6 @@ class ArtistImputer:
         self.copy = copy
         self.timeout = timeout
         self.log_path = log_path
-        self.region_wikipedia_threshold = region_wikipedia_threshold
         self.cache_enabled = cache_enabled
         if self.cache_enabled:
             base_cache_dir = Path(cache_dir) if cache_dir is not None else Path(__file__).resolve().parent
@@ -83,6 +88,15 @@ class ArtistImputer:
         self._wiki_text_cache: Dict[tuple[str, str], str] = {}
         self._region_cache: Dict[str, Optional[str]] = {}
         self._region_prop_column = self.artist_props.get("P131", "province_or_region")
+        
+        # Initialize LLM extractor if available and enabled
+        self.use_llm = use_llm and LLM_AVAILABLE
+        if self.use_llm:
+            try:
+                self._llm_extractor = LLMExtractor(cache_dir=self.cache_dir / ".llm_cache" if self.cache_dir else None)
+            except Exception as e:
+                print(f"Warning: LLM extractor initialization failed: {e}")
+                self.use_llm = False
 
     def impute_from_wikidata(
         self,
@@ -92,6 +106,10 @@ class ArtistImputer:
         cache_dir: Optional[str | Path] = None,
         use_cache: Optional[bool] = None,
     ) -> pd.DataFrame:
+
+
+        print("ArtistImputer - Test Run")
+        print("=" * 50)
         if not isinstance(df, pd.DataFrame):
             raise TypeError("df must be a pandas DataFrame")
         cache_path = self._resolve_cache_path(cache_dir, use_cache)
@@ -110,28 +128,79 @@ class ArtistImputer:
 
     def _impute_row(self, row: pd.Series) -> pd.Series:
         title = row[self.id_column]
-        entity = self._entity_from_title(self.wiki_mapping[title])
-        if not entity:
+        wiki_title = self.wiki_mapping.get(title, "")
+        print(f"[DEBUG] Processing: {row.get('name', title)} | wiki_title={wiki_title}")
+        
+        entity = self._entity_from_title(wiki_title) if wiki_title else None
+        
+        if not entity and not self.use_llm:
+            print(f"[DEBUG]   → No Wikidata entity and LLM disabled, skipping")
             self._log_imputation(row.name, row["name"], {}, None)
             return row
 
-        record = self._extract_artist_record(entity)
-        current_region = record.get(self._region_prop_column)
+        record = self._extract_artist_record(entity) if entity else {}
+        print(f"[DEBUG]   → Wikidata record: {list(record.keys()) if record else 'empty'}")
+        
+        # Check which fields are still missing
+        missing_fields = self._get_missing_fields(row, record)
+        print(f"[DEBUG]   → Missing fields: {missing_fields}")
+        
+        # Use LLM to fill missing fields
+        if self.use_llm and missing_fields and wiki_title:
+            print(f"[DEBUG]   → Calling LLM extractor...")
+            llm_record = self._extract_with_llm(wiki_title, title)
+            if llm_record:
+                filled = []
+                for field, value in llm_record.items():
+                    if field in missing_fields and value is not None:
+                        record[field] = value
+                        filled.append(f"{field}={value}")
+                print(f"[DEBUG]   → LLM filled: {filled if filled else 'nothing'}")
+            else:
+                print(f"[DEBUG]   → LLM returned nothing")
+
+        # Handle region specially (backward compatibility)
+        current_region = record.get(self._region_prop_column) or record.get("region")
         if self._is_missing(current_region):
             current_region = row.get(self._region_prop_column)
 
-        region_value, region_source = self._resolve_region(
-            entity, title, current_region
-        )
-        if region_value:
-            record[self._region_prop_column] = region_value
+        if current_region:
+            record[self._region_prop_column] = current_region
             if self.region_column:
-                record.setdefault(self.region_column, region_value)
+                record.setdefault(self.region_column, current_region)
 
         applied = self._apply_values(row, record)
-        region_info = {"value": region_value, "source": region_source} if region_value else None
+        print(f"[DEBUG]   → Applied: {list(applied.keys()) if applied else 'nothing'}")
+        region_info = {"value": current_region, "source": "llm" if self.use_llm else "wikidata"} if current_region else None
         self._log_imputation(row.name, row["name"], applied, region_info)
         return row
+
+    def _get_missing_fields(self, row: pd.Series, record: Dict[str, Any]) -> set:
+        """Get fields that are missing in both row and record."""
+        target_fields = {"region", "birth_date", "birth_place", "active_start", "province"}
+        missing = set()
+        for field in target_fields:
+            record_value = record.get(field)
+            row_value = row.get(field) if field in row.index else None
+            if self._is_missing(record_value) and self._is_missing(row_value):
+                missing.add(field)
+        return missing
+
+    def _extract_with_llm(self, wiki_title: str, artist_id: str) -> Optional[Dict[str, Any]]:
+        """Extract artist info using LLM from Wikipedia text."""
+        if not self.use_llm:
+            return None
+        
+        text = self._fetch_wikipedia_text(wiki_title)
+        if not text:
+            return None
+        
+        try:
+            info = self._llm_extractor.extract(text, artist_id=artist_id)
+            return info.model_dump()
+        except Exception as e:
+            print(f"LLM extraction failed for {wiki_title}: {e}")
+            return None
 
     def _entity_from_title(self, title: str) -> Optional[Dict[str, Any]]:
         if not isinstance(title, str) or not title.strip():
@@ -227,22 +296,6 @@ class ArtistImputer:
 
     # Logic to try inferring the region and province
 
-    def _resolve_region(
-        self,
-        entity: Dict[str, Any],
-        title: str,
-        current_value: Any,
-    ) -> tuple[Optional[str], Optional[str]]:
-        if not self._is_missing(current_value):
-            return current_value, "wikidata_property"
-        region = self._infer_location_from_hints(entity)
-        if region:
-            return region, "regional_hint"
-        wiki_region = self._infer_location_from_wikipedia(self.wiki_mapping[title])
-        if wiki_region:
-            return wiki_region, "wikipedia_text"
-        return None, None
-
     def _infer_location_from_hints(self, entity: Dict[str, Any]) -> Optional[str]:
         for pid in self.location_hint_props:
             for hint in self._extract_claim_values(entity, pid):
@@ -250,54 +303,6 @@ class ArtistImputer:
                 if location:
                     return location
         return None
-
-    def _infer_location_from_wikipedia(self, title: str) -> Optional[str]:
-        ranked = self._rank_locations_from_wikipedia(title)
-        if not ranked:
-            return None
-        
-        if len(ranked) == 1:
-            normalized = self._normalize_location_label(ranked[0][0])
-            if normalized:
-                return normalized
-            
-        elif ranked[0][1] > ranked[1][1] + self.region_wikipedia_threshold:
-            normalized = self._normalize_location_label(ranked[0][0])
-            if normalized:
-                return normalized
-                
-        return None
-
-    def _rank_locations_from_wikipedia(self, title: str, lang: str = "it") -> List[tuple[str, int]]:
-        text = self._fetch_wikipedia_text(title, lang=lang)
-        if not text:
-            return []
-        region_keywords = set(REGIONS)
-        region_keywords.update(REGION_SYNONYMS.keys())
-        counts = Counter()
-        first_seen: Dict[str, int] = {}
-
-        def record_hit(key: str, pos: int) -> None:
-            counts[key] += 1
-            if key not in first_seen or pos < first_seen[key]:
-                first_seen[key] = pos
-
-        for keyword in region_keywords:
-            for match in re.finditer(rf"{re.escape(keyword)}", text, flags=re.IGNORECASE):
-                record_hit(keyword, match.start())
-
-        for city, region in CITY_TO_REGION.items():
-            for match in re.finditer(rf"{re.escape(city)}", text, flags=re.IGNORECASE):
-                record_hit(region, match.start())
-
-        return sorted(
-            counts.items(),
-            key=lambda item: (
-                -item[1],
-                first_seen.get(item[0], float("inf")),
-                item[0],
-            ),
-        )
 
     def _fetch_wikipedia_text(self, title: str, lang: str = "it") -> str:
         if not isinstance(title, str) or not title.strip():
@@ -537,5 +542,5 @@ if __name__ == "__main__":
     artists_df = pd.read_csv("datasets/artists.csv", sep=";")
     columns = artists_df.columns
     imputer = ArtistImputer()
-    artists_df = imputer.impute_from_wikidata(artists_df)
+    artists_df = imputer.impute_from_wikidata(artists_df, cache_dir=None, use_cache=False)
     artists_df.to_csv("artists_imputed2.csv", columns=columns)
