@@ -208,3 +208,13 @@ __marimo__/
 /config
 log*
 plots/
+**/extracted_features/
+**/__pycache__
+**/.DS_Store
+task4/*
+!task4/timeseries_analisys.ipynb
+!task4/shapelet_analisys.ipynb
+!task4/feature_extractor.py
+!task4/utils.py
+!task4/shapelet_utils.py
+!task4/SoftShape_repo/
