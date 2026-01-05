@@ -209,4 +209,9 @@ __marimo__/
 log*
 **/extracted_features/*
 **/__pycache__
-**/.DS_Store
+**/.DS_Storetask4/*
+!task4/timeseries_analisys.ipynb
+!task4/shapelet_analisys.ipynb
+!task4/feature_extractor.py
+!task4/utils.py
+!task4/shapelet_utils.py
