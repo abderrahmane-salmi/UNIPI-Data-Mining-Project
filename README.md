@@ -5,9 +5,9 @@
 
 ## 👥 Authors
 
-- Abderrahmane Salmi – 704608  
-- Ricardo Talarico – 637853  
-- Lorenzo Allegrini – 637843  
+- Abderrahmane Salmi  
+- Ricardo Talarico  
+- Lorenzo Allegrini  
 
 ---
 
